@@ -8,8 +8,8 @@ const GYM = "○○피트니스";
 
 // ── 데모 회원 DB (실서비스에선 실제 회원 데이터로 교체) ──
 const MEMBERS = {
-  "01012345678": { name: "홍길동", membership: { type: "헬스 3개월", expire: "2026-07-25", dday: 15 }, pt: { remain: 3, trainer: "김코치" }, locker: true },
-  "01099998888": { name: "김영희", membership: { type: "헬스+필라 6개월", expire: "2026-11-02", dday: 115 }, pt: { remain: 0, trainer: null }, locker: false },
+  "01012345678": { name: "홍길동", membership: { type: "헬스 3개월", expire: "2026-07-25" }, pt: { remain: 3, trainer: "김코치" }, locker: true },
+  "01099998888": { name: "김영희", membership: { type: "헬스+필라 6개월", expire: "2026-11-02" }, pt: { remain: 0, trainer: null }, locker: false },
 };
 const APPUSER_TO_PHONE = { "demo-appuser-1": "01012345678" };
 
@@ -34,12 +34,23 @@ const btnMsg = (label) => ({ action: "message", label, messageText: label });
 const MENU = [qr("회원권 조회", "내 회원권 조회"), qr("PT 예약", "PT 예약할래"), qr("가격 안내", "가격 알려줘"), qr("상담원 연결", "상담원 연결")];
 
 const normPhone = (s) => String(s || "").replace(/\D/g, "");
+// 오늘(한국시간) 기준 만료일까지 남은 일수 계산
+function ddayOf(expire) {
+  const end = new Date(expire + "T23:59:59+09:00");
+  const now = new Date();
+  return Math.max(0, Math.ceil((end - now) / 86400000));
+}
 function findMember(body) {
   const props = body?.userRequest?.user?.properties || {};
   const id = props.appUserId;
   if (id && APPUSER_TO_PHONE[id]) { const p = APPUSER_TO_PHONE[id]; return { phone: p, ...MEMBERS[p] }; }
   const params = body?.action?.params || {};
-  const phone = normPhone(params.phone || params.sys_phone_number || params.전화번호);
+  let phone = normPhone(params.phone || params.sys_phone_number || params.전화번호);
+  // 파라미터에 없으면 발화 텍스트에서 전화번호(01x-xxxx-xxxx) 추출
+  if (!phone || !MEMBERS[phone]) {
+    const m = normPhone(body?.userRequest?.utterance).match(/01\d{8,9}/);
+    if (m) phone = m[0];
+  }
   if (phone && MEMBERS[phone]) return { phone, ...MEMBERS[phone] };
   return null;
 }
@@ -61,13 +72,15 @@ app.post("/skill/identify", (req, res) => {
 
 app.post("/skill/membership", (req, res) => {
   const m = findMember(req.body);
-  if (!m) return res.json(skill([text("회원 정보를 먼저 연결해 주세요. 등록하신 전화번호를 입력하시면 조회해 드릴게요.")], [qr("내 정보 연결", "회원 연결")]));
+  if (!m) return res.json(skill([text("회원 정보를 찾지 못했어요. 등록하신 전화번호를 함께 입력해 주세요.\n예) 회원권 01012345678")], [qr("가격 안내", "가격 알려줘")]));
+  const dday = ddayOf(m.membership.expire);
   const pt = m.pt.remain > 0 ? `${m.pt.remain}회 남음 (${m.pt.trainer})` : "없음";
   res.json(skill([{ itemCard: {
     head: { title: `${m.name} 회원님 이용현황` },
     itemList: [
       { title: "회원권", description: m.membership.type },
-      { title: "만료일", description: `${m.membership.expire} (D-${m.membership.dday})` },
+      { title: "만료일", description: m.membership.expire },
+      { title: "남은 기간", description: `${dday}일 남음 (D-${dday})` },
       { title: "PT", description: pt },
       { title: "락커", description: m.locker ? "이용 중" : "미이용" },
     ],
