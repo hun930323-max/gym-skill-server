@@ -209,9 +209,15 @@ function extendMembership(phone, plan) {
 
 // ── ② PT 예약 고도화 엔진 ──────────────────────────────
 const TRAINERS = {
-  "김코치": { name: "김코치", specialty: "웨이트·체형교정", hours: [10, 11, 14, 15, 16, 17, 18, 19] },
-  "이코치": { name: "이코치", specialty: "다이어트·재활", hours: [9, 10, 11, 13, 14, 15, 16] },
-  "박코치": { name: "박코치", specialty: "필라테스·바디프로필", hours: [11, 12, 13, 17, 18, 19, 20] },
+  "김코치": { name: "김코치", specialty: "웨이트·체형교정", hours: [10, 11, 14, 15, 16, 17, 18, 19],
+    photo: "KIM COACH", career: "경력 10년", certs: "생활스포츠지도사 2급 · NSCA-CPT",
+    intro: "자세부터 잡아드립니다", tags: "#근력 #체형교정 #벌크업", clients: "누적 회원 800명+" },
+  "이코치": { name: "이코치", specialty: "다이어트·재활", hours: [9, 10, 11, 13, 14, 15, 16],
+    photo: "LEE COACH", career: "경력 7년", certs: "물리치료사 · 교정운동전문가(FMS)",
+    intro: "무리 없이 꾸준하게", tags: "#다이어트 #재활 #통증개선", clients: "재활 PT 전문" },
+  "박코치": { name: "박코치", specialty: "필라테스·바디프로필", hours: [11, 12, 13, 17, 18, 19, 20],
+    photo: "PARK COACH", career: "경력 5년", certs: "필라테스 지도자 · 바디프로필 코칭",
+    intro: "라인을 만드는 운동", tags: "#필라테스 #바디프로필 #체형라인", clients: "대회 입상 코칭" },
 };
 const TRAINER_NAMES = Object.keys(TRAINERS);
 const RESERVATIONS = [];
@@ -976,12 +982,17 @@ app.post("/skill/event", (_req, res) => {
   } }], MENU));
 });
 
+const hoursRange = (hrs) => `${Math.min(...hrs)}시~${Math.max(...hrs)}시`;
 app.post("/skill/trainer", (_req, res) => {
-  res.json(skill([{ carousel: { type: "basicCard", items: [
-    { title: "김코치", description: "웨이트·체형교정 전문 · 경력 10년\n\"자세부터 잡아드립니다\"", buttons: [btnMsg("김코치 예약")] },
-    { title: "이코치", description: "다이어트·재활 전문 · 경력 7년\n\"무리 없이 꾸준하게\"", buttons: [btnMsg("이코치 예약")] },
-    { title: "박코치", description: "필라테스·바디프로필 전문 · 경력 5년\n\"라인을 만드는 운동\"", buttons: [btnMsg("박코치 예약")] },
-  ] } }], MENU));
+  const img = (t) => `https://placehold.co/800x400/1B2430/FFB020.png?text=${encodeURIComponent(t)}`;
+  const items = Object.values(TRAINERS).map((t) => ({
+    title: `${t.name} · ${t.specialty}`,
+    description: `📌 전문: ${t.specialty}\n🏅 ${t.career} · ${t.clients}\n📜 ${t.certs}\n🕒 담당 ${hoursRange(t.hours)} (평일)\n${t.tags}\n💬 "${t.intro}"`,
+    thumbnail: { imageUrl: img(t.photo) },
+    buttons: [btnMsg(`${t.name} 예약`), btnMsg("가격 안내")],
+  }));
+  res.json(skill([{ carousel: { type: "basicCard", items } }],
+    [qr("PT 예약", "PT 예약할래"), qr("무료 상담", "무료 상담 신청"), qr("가격 안내", "가격 알려줘")]));
 });
 
 app.post("/skill/pt", (_req, res) => {
