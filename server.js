@@ -507,6 +507,85 @@ const EVENTS = [
   { title: "📊 인바디 무료 체험 (7월 한정)", desc: "체성분 측정 + 결과 상담 무료", end: kstDatePlus(6), total: 50, left: 12 },
 ];
 
+// ── 사장님 리포트(주간/월간) ──
+function newSince(days) {
+  const cut = dayIdx(kstDate(0)) - days;
+  const list = [];
+  for (const mem of Object.values(MEMBERS)) if (mem.joinDate && dayIdx(mem.joinDate) > cut) list.push({ name: mem.name, joinDate: mem.joinDate });
+  return list.sort((a, b) => b.joinDate.localeCompare(a.joinDate));
+}
+function visitsSince(days) {
+  const cut = dayIdx(kstDate(0)) - days;
+  let t = 0;
+  for (const p of Object.keys(ATT)) t += [...ATT[p]].map(dayIdx).filter((i) => i > cut).length;
+  return t;
+}
+function revenueSince(days) {
+  const cut = dayIdx(kstDate(0)) - days;
+  let sum = 0, cnt = 0;
+  for (const m of Object.values(MEMBERS)) for (const p of (m.payments || [])) if (dayIdx(p.date) > cut) { sum += p.amount; cnt++; }
+  return { sum, cnt };
+}
+function ptCountSince(days) {
+  const cut = dayIdx(kstDate(0)) - days;
+  return RESERVATIONS.filter((r) => dayIdx(r.date) > cut && r.status !== "canceled").length;
+}
+function ptLowMembers(th = 2) {
+  const out = [];
+  for (const [, m] of Object.entries(MEMBERS)) if (m.pt && m.pt.total && m.pt.remain != null && m.pt.remain <= th) out.push({ name: m.name, remain: m.pt.remain });
+  return out;
+}
+function reportData(days) {
+  return { nw: newSince(days), rev: revenueSince(days), visits: visitsSince(days), pt: ptCountSince(days),
+    exp: expiringSoon(7), dorm: dormantMembers(14), leads: newLeads(), reqs: newRequests(), ptlow: ptLowMembers(2) };
+}
+function reportItemList(days) {
+  const d = reportData(days);
+  return [
+    { title: "신규 등록", description: `${d.nw.length}명${d.nw.length ? ` (${d.nw.slice(0, 3).map((n) => n.name).join(", ")}${d.nw.length > 3 ? " 외" : ""})` : ""}` },
+    { title: "결제 매출", description: `${won(d.rev.sum)} (${d.rev.cnt}건)` },
+    { title: "방문 연인원", description: `${d.visits}명` },
+    { title: "PT 예약", description: `${d.pt}건` },
+    { title: "상담/요청 접수", description: `상담 ${d.leads.length}건 · 요청 ${d.reqs.length}건` },
+  ];
+}
+function reportTail(days) {
+  const d = reportData(days);
+  return `⚠️ 관리 필요: 만료임박 ${d.exp.length}명 · 휴면 ${d.dorm.length}명 · PT소진임박 ${d.ptlow.length}명`;
+}
+function reportText(days, label) {
+  const d = reportData(days);
+  return `📈 [${GYM}] ${label} 리포트 (최근 ${days}일)\n· 신규 등록 ${d.nw.length}명\n· 결제 매출 ${won(d.rev.sum)} (${d.rev.cnt}건)\n· 방문 연인원 ${d.visits}명\n· PT 예약 ${d.pt}건\n· 상담 ${d.leads.length} · 요청 ${d.reqs.length}\n· 만료임박 ${d.exp.length} · 휴면 ${d.dorm.length} · PT소진임박 ${d.ptlow.length}`;
+}
+
+// ── 개인레슨(PT) 이용권 강화 ──
+const PT_PACKAGES = [
+  { key: "10", count: 10, price: 550000, valid: 120 },
+  { key: "20", count: 20, price: 990000, valid: 180 },
+  { key: "30", count: 30, price: 1350000, valid: 240 },
+];
+MEMBERS["01012345678"].pt = { remain: 3, total: 10, trainer: "김코치", expire: kstDatePlus(50) };
+MEMBERS["01066665555"].pt = { remain: 2, total: 20, trainer: "이코치", expire: kstDatePlus(30) };
+function ptStatusCard(res, m) {
+  const pt = m.pt || { remain: 0 };
+  const total = pt.total || pt.remain || 0;
+  const used = Math.max(0, total - (pt.remain || 0));
+  const last = pastReservations(m.phone)[0];
+  const outputs = [{ itemCard: {
+    head: { title: `💪 ${m.name}님 PT 현황` },
+    itemList: [
+      { title: "담당 트레이너", description: pt.trainer || "미지정" },
+      { title: "이용권", description: `총 ${total}회 · 잔여 ${pt.remain || 0}회` },
+      { title: "사용 진행", description: progressBar(used, total || 1) },
+      { title: "유효기간", description: pt.expire || "-" },
+      { title: "최근 수업", description: last ? `${last.date} ${last.trainer}` : "없음" },
+    ],
+    buttons: [btnMsg("PT 예약"), ((pt.remain || 0) <= 2 ? btnMsg("이용권 구매") : btnMsg("운동 기록"))],
+  } }];
+  if ((pt.remain || 0) <= 2) outputs.push(text(`⚠️ 잔여 ${pt.remain || 0}회! 곧 소진돼요. 이용권 재등록을 추천드려요.`));
+  return res.json(skill(outputs, [qr("PT 예약", "PT 예약할래"), qr("이용권 구매", "이용권 구매"), qr("운동 기록", "운동 기록")]));
+}
+
 // ── 스킬 응답 빌더 ──
 const skill = (outputs, quickReplies) => {
   const template = { outputs };
@@ -616,6 +695,17 @@ app.get("/admin/daily-scan", (_req, res) => {
 // ── ⑤ 관리자: 리드(상담 신청) 목록 조회(JSON) ──
 app.get("/admin/leads", (_req, res) => {
   res.json({ scannedAt: new Date().toISOString(), total: LEADS.length, newCount: newLeads().length, leads: LEADS });
+});
+
+// ── 사장님 리포트 자동 발송(외부 cron이 매주/매월 호출) ──
+// 예) cron-job.org 가 매주 월요일 09시에 GET /admin/report?period=week 호출 → 사장님 카톡 발송(SEND_ENABLED=true 시)
+app.get("/admin/report", (req, res) => {
+  const days = req.query.period === "month" ? 30 : 7;
+  const label = days === 30 ? "월간" : "주간";
+  const message = reportText(days, label);
+  const r = sendMessage("owner", { channel: "알림톡(정보성)", kind: "report", message });
+  res.json({ sentAt: new Date().toISOString(), sendEnabled: SEND_ENABLED, period: label, report: message, dryRun: !!r.dryRun,
+    note: SEND_ENABLED ? "실제 발송됨." : "dry-run 로그만. 외부 cron(cron-job.org 등)이 매주/매월 이 URL을 호출하도록 설정하면 자동 리포트가 발송됩니다." });
 });
 
 // ── ① 원클릭 연장 페이지 ──
@@ -1110,12 +1200,40 @@ app.post("/skill/trainer", (_req, res) => {
     [qr("PT 예약", "PT 예약할래"), qr("무료 상담", "무료 상담 신청"), qr("가격 안내", "가격 알려줘")]));
 });
 
-app.post("/skill/pt", (_req, res) => {
-  res.json(skill([{ basicCard: {
-    title: "💪 PT 안내",
-    description: "1:1 맞춤 프로그램으로 목표(다이어트·근력·재활)에 맞춰 트레이너를 매칭해 드려요.\n· 10/20/30회 단위 등록\n· 첫 상담·체험 무료",
-    buttons: [btnMsg("PT 예약"), btnMsg("강사 소개")],
-  } }], [qr("강사 소개", "강사 소개"), qr("PT 예약", "PT 예약할래"), qr("가격 안내", "가격 알려줘")]));
+app.post("/skill/pt", (req, res) => {
+  const utter = req.body?.userRequest?.utterance || "";
+  const m = findMember(req.body);
+  const buyMatch = utter.match(/(\d{2})\s*회/);
+  // 구매 확정: "PT 10회 구매 01012345678"
+  if (/(구매|등록|결제|끊)/.test(utter) && buyMatch && m) {
+    const pkg = PT_PACKAGES.find((p) => p.key === buyMatch[1]) || PT_PACKAGES[0];
+    m.pt = m.pt || { remain: 0 };
+    m.pt.remain = (m.pt.remain || 0) + pkg.count;
+    m.pt.total = (m.pt.total || 0) + pkg.count;
+    m.pt.expire = kstDatePlus(pkg.valid);
+    (m.payments = m.payments || []).push({ date: kstDate(0), item: `PT ${pkg.count}회`, amount: pkg.price });
+    return res.json(skill([{ basicCard: {
+      title: "✅ PT 이용권 등록 완료",
+      description: `${m.name}님 · PT ${pkg.count}회 등록\n· 결제금액 ${won(pkg.price)}\n· 잔여 ${m.pt.remain}회 · 유효기간 ${m.pt.expire}\n카톡으로 영수증을 보내드릴게요.`,
+      buttons: [btnMsg("PT 현황"), btnMsg("PT 예약")],
+    } }], MENU));
+  }
+  // 이용권 구매 안내(패키지 목록)
+  if (/(구매|결제|패키지|이용권\s*등록|끊)/.test(utter)) {
+    return res.json(skill([{ listCard: {
+      header: { title: "🎫 PT 이용권 안내" },
+      items: PT_PACKAGES.map((p) => ({ title: `PT ${p.count}회`, description: `${won(p.price)} · 회당 ${won(Math.round(p.price / p.count))} · 유효 ${p.valid}일` })),
+      buttons: [btnMsg("PT 10회 구매"), btnMsg("PT 20회 구매")],
+    } }], [qr("PT 10회 구매", "PT 10회 구매"), qr("PT 20회 구매", "PT 20회 구매"), qr("PT 30회 구매", "PT 30회 구매")]));
+  }
+  // 이용권 현황(회원 식별 시)
+  if (m) return ptStatusCard(res, m);
+  // 미식별 기본 안내
+  return res.json(skill([{ basicCard: {
+    title: "💪 PT(개인레슨) 안내",
+    description: "1:1 맞춤 프로그램으로 목표(다이어트·근력·재활)에 맞춰 트레이너를 매칭해 드려요.\n· 10/20/30회 패키지\n· 첫 상담·체험 무료\n\n내 PT 현황을 보려면 전화번호를 입력해 주세요. 예) PT 현황 01012345678",
+    buttons: [btnMsg("PT 예약"), btnMsg("이용권 구매"), btnMsg("강사 소개")],
+  } }], [qr("PT 예약", "PT 예약할래"), qr("이용권 구매", "이용권 구매"), qr("강사 소개", "강사 소개")]));
 });
 
 app.post("/skill/fallback", (_req, res) => {
@@ -1125,10 +1243,18 @@ app.post("/skill/fallback", (_req, res) => {
 
 // ── ③ 사장님용 관리자 조회 스킬 ──
 // 주의(운영): 실제 배포 시 이 블록은 사장님 전용 채널/봇 또는 관리자 인증 뒤에 두세요.
-const ADMIN_MENU = [qr("오늘 출석", "오늘 출석 명단"), qr("이번 주 신규", "이번 주 신규 등록"), qr("만료 임박", "만료 임박 명단"), qr("휴면 회원", "휴면 회원 명단"), qr("상담 접수", "상담 접수 현황"), qr("요청 접수", "요청 접수 현황")];
+const ADMIN_MENU = [qr("주간 리포트", "주간 리포트"), qr("오늘 출석", "오늘 출석 명단"), qr("이번 주 신규", "이번 주 신규 등록"), qr("만료 임박", "만료 임박 명단"), qr("휴면 회원", "휴면 회원 명단"), qr("상담 접수", "상담 접수 현황"), qr("요청 접수", "요청 접수 현황")];
 app.post("/skill/admin", (req, res) => {
   const utter = req.body?.userRequest?.utterance || "";
   const att = todayAttendanceList();
+  if (/리포트|주간|월간/.test(utter)) {
+    const days = /월간|한\s*달/.test(utter) ? 30 : 7;
+    const label = days === 30 ? "월간" : "주간";
+    return res.json(skill([
+      { itemCard: { head: { title: `📈 ${label} 리포트 (최근 ${days}일)` }, itemList: reportItemList(days), buttons: [btnMsg("오늘 출석 명단"), btnMsg("상담 접수 현황")] } },
+      text(reportTail(days)),
+    ], ADMIN_MENU));
+  }
   if (/요청/.test(utter)) {
     const rs = newRequests();
     return res.json(skill([{ itemCard: {
