@@ -64,8 +64,20 @@ function ddayOf(expire) {
 
 // ── 출석 로그 (데모 시드) ──
 const ATT = {};
-ATT["01012345678"] = new Set([kstDate(1), kstDate(2), kstDate(3), kstDate(4), kstDate(5), kstDate(6), kstDate(7)]); // 홍길동: 7일 연속
+ATT["01012345678"] = new Set([kstDate(0), kstDate(1), kstDate(2), kstDate(3), kstDate(4), kstDate(5), kstDate(6), kstDate(7)]); // 홍길동: 오늘 포함 연속
 ATT["01099998888"] = new Set([kstDate(3), kstDate(8), kstDate(12)]); // 김영희: 뜸함
+// ③④ 관리자 조회·휴면 데모용 시드
+ATT["01077776666"] = new Set([kstDate(0), kstDate(1)]);      // 박민수: 오늘 출석
+ATT["01055554444"] = new Set([kstDate(0)]);                   // 정해나: 오늘 출석
+MEMBERS["01044443333"] = { name: "강휴면", membership: { type: "헬스 6개월", expire: kstDatePlus(40) }, pt: { remain: 0, trainer: null }, locker: false }; // 휴면 데모 회원
+ATT["01044443333"] = new Set([kstDate(18), kstDate(20), kstDate(25)]); // 강휴면: 18일째 미방문
+// 가입일(이번 주 신규 등록 집계용). 데모.
+MEMBERS["01012345678"].joinDate = kstDate(95);
+MEMBERS["01099998888"].joinDate = kstDate(150);
+MEMBERS["01077776666"].joinDate = kstDate(2);   // 이번 주 신규
+MEMBERS["01066665555"].joinDate = kstDate(60);
+MEMBERS["01055554444"].joinDate = kstDate(4);   // 이번 주 신규
+MEMBERS["01044443333"].joinDate = kstDate(200);
 function streakOf(set) {
   if (!set || !set.size) return 0;
   const idx = [...set].map(dayIdx).sort((a, b) => b - a);
@@ -280,6 +292,54 @@ function scanReservationReminders() {
 RESERVATIONS.push({ id: newResId(), phone: "01012345678", name: "홍길동", trainer: "김코치", date: kstDatePlus(1), time: "19:00", status: "confirmed", remindedDayBefore: false });
 RESERVATIONS.push({ id: newResId(), phone: "01066665555", name: "최지우", trainer: "이코치", date: kstDatePlus(2), time: "14:00", status: "confirmed", remindedDayBefore: false });
 
+// ── ③ 사장님용 관리자 조회 엔진 ──────────────────────────────
+function todayAttendanceList() {
+  const today = kstDate(0);
+  const list = [];
+  for (const [phone, mem] of Object.entries(MEMBERS)) if (ATT[phone] && ATT[phone].has(today)) list.push(mem.name);
+  return list;
+}
+function newThisWeek() {
+  const cut = dayIdx(kstDate(0)) - 7;
+  const list = [];
+  for (const [, mem] of Object.entries(MEMBERS)) if (mem.joinDate && dayIdx(mem.joinDate) > cut) list.push({ name: mem.name, joinDate: mem.joinDate });
+  return list.sort((a, b) => b.joinDate.localeCompare(a.joinDate));
+}
+function expiringSoon(days = 7) {
+  const list = [];
+  for (const [, mem] of Object.entries(MEMBERS)) { const d = ddayOf(mem.membership.expire); if (d <= days) list.push({ name: mem.name, dday: d, expire: mem.membership.expire }); }
+  return list.sort((a, b) => a.dday - b.dday);
+}
+
+// ── ④ 휴면회원(2주+ 미방문) 세그먼트 + 리마인드 ──
+function lastVisit(phone) { const s = ATT[phone]; if (!s || !s.size) return null; return [...s].sort().pop(); }
+function daysSince(ymd) { return dayIdx(kstDate(0)) - dayIdx(ymd); }
+function dormantMembers(thresholdDays = 14) {
+  const out = [];
+  for (const [phone, mem] of Object.entries(MEMBERS)) {
+    const lv = lastVisit(phone);
+    if (lv) { const d = daysSince(lv); if (d >= thresholdDays) out.push({ phone, name: mem.name, lastVisit: lv, days: d }); }
+    else if (mem.joinDate && daysSince(mem.joinDate) >= thresholdDays) out.push({ phone, name: mem.name, lastVisit: null, days: null }); // 가입만 하고 방문 이력 없음
+  }
+  return out.sort((a, b) => (b.days || 9999) - (a.days || 9999));
+}
+const dormantLog = {}; // phone -> 마지막 발송 dayIdx (주 1회 제한)
+function scanDormant() {
+  const seg = dormantMembers(14);
+  const todayIdx = dayIdx(kstDate(0));
+  const out = [];
+  for (const d of seg) {
+    if (dormantLog[d.phone] && todayIdx - dormantLog[d.phone] < 7) continue; // 최근 7일 내 이미 보냄
+    dormantLog[d.phone] = todayIdx;
+    const msg = d.lastVisit
+      ? `[${GYM}] ${d.name}님, ${d.days}일째 안 보이셔서 걱정돼요 🥺\n오랜만에 몸 풀러 오세요! 이번 주 방문 시 [단백질바 증정] 🎁`
+      : `[${GYM}] ${d.name}님, 아직 첫 방문 전이시네요! 편하게 나오셔서 시설 둘러보세요 💪 (첫 방문 PT 체험 무료)`;
+    const r = sendMessage(d.phone, { channel: "친구톡(광고성)", message: msg, kind: "dormant" });
+    out.push({ phone: d.phone, name: d.name, lastVisit: d.lastVisit, days: d.days, message: msg, sent: r.ok, dryRun: !!r.dryRun });
+  }
+  return out;
+}
+
 // ── 스킬 응답 빌더 ──
 const skill = (outputs, quickReplies) => {
   const template = { outputs };
@@ -366,15 +426,24 @@ app.get("/admin/reservation-scan", (_req, res) => {
     note: SEND_ENABLED ? "SEND_ENABLED=true — 실제 발송." : "dry-run 로그만. 채널 연결·템플릿 승인 후 SEND_ENABLED=true." });
 });
 
-// ── 관리자: 스캔을 한 번에(하루 1회 실행용) — 리워드/재등록/PT리마인드 ──
+// ── ④ 관리자: 휴면회원 리마인드 스캔(스케줄러/외부 cron이 매일 호출) ──
+app.get("/admin/dormant-scan", (_req, res) => {
+  const sent = scanDormant();
+  res.json({ scannedAt: new Date().toISOString(), sendEnabled: SEND_ENABLED, count: sent.length, dormant: sent,
+    note: SEND_ENABLED ? "SEND_ENABLED=true — 실제 발송." : "dry-run 로그만. 채널 연결·템플릿 승인 후 SEND_ENABLED=true." });
+});
+
+// ── 관리자: 스캔을 한 번에(하루 1회 실행용) — 리워드/재등록/PT리마인드/휴면 ──
 app.get("/admin/daily-scan", (_req, res) => {
   const rewards = scanRewards();
   const renewals = scanRenewals();
   const ptReminders = scanReservationReminders();
+  const dormant = scanDormant();
   res.json({ scannedAt: new Date().toISOString(), sendEnabled: SEND_ENABLED,
     rewards: { count: rewards.length, items: rewards },
     renewals: { count: renewals.length, items: renewals },
-    ptReminders: { count: ptReminders.length, items: ptReminders } });
+    ptReminders: { count: ptReminders.length, items: ptReminders },
+    dormant: { count: dormant.length, items: dormant } });
 });
 
 // ── ① 원클릭 연장 페이지 ──
@@ -663,6 +732,47 @@ app.post("/skill/fallback", (_req, res) => {
     [qr("상담 신청", "상담 신청합니다"), qr("처음으로", "메뉴")]));
 });
 
+// ── ③ 사장님용 관리자 조회 스킬 ──
+// 주의(운영): 실제 배포 시 이 블록은 사장님 전용 채널/봇 또는 관리자 인증 뒤에 두세요.
+const ADMIN_MENU = [qr("오늘 출석", "오늘 출석 명단"), qr("이번 주 신규", "이번 주 신규 등록"), qr("만료 임박", "만료 임박 명단"), qr("휴면 회원", "휴면 회원 명단")];
+app.post("/skill/admin", (req, res) => {
+  const utter = req.body?.userRequest?.utterance || "";
+  const att = todayAttendanceList();
+  if (/출석/.test(utter)) {
+    return res.json(skill([text(`📊 오늘 출석 ${att.length}명\n${att.length ? att.join(", ") : "아직 없음"}`)], ADMIN_MENU));
+  }
+  if (/신규|가입|등록/.test(utter)) {
+    const nw = newThisWeek();
+    return res.json(skill([text(`🆕 이번 주 신규 등록 ${nw.length}명\n${nw.length ? nw.map((n) => `· ${n.name} (${n.joinDate})`).join("\n") : "없음"}`)], ADMIN_MENU));
+  }
+  if (/만료|재등록|연장|임박/.test(utter)) {
+    const exp = expiringSoon(7);
+    return res.json(skill([{ itemCard: {
+      head: { title: `⏰ 만료 임박 ${exp.length}명 (7일 내)` },
+      itemList: exp.length ? exp.map((e) => ({ title: e.name, description: `D-${e.dday} · 만료 ${e.expire}` })) : [{ title: "없음", description: "임박 회원이 없어요" }],
+    } }], ADMIN_MENU));
+  }
+  if (/휴면|미방문/.test(utter)) {
+    const dorm = dormantMembers(14);
+    return res.json(skill([{ itemCard: {
+      head: { title: `💤 휴면 회원 ${dorm.length}명 (2주+ 미방문)` },
+      itemList: dorm.length ? dorm.map((d) => ({ title: d.name, description: d.lastVisit ? `${d.days}일째 미방문` : "방문 기록 없음" })) : [{ title: "없음", description: "휴면 회원이 없어요" }],
+    } }], ADMIN_MENU));
+  }
+  // 요약 대시보드
+  const nw = newThisWeek(), exp = expiringSoon(7), dorm = dormantMembers(14);
+  res.json(skill([{ itemCard: {
+    head: { title: `👔 ${GYM} 사장님 대시보드` },
+    itemList: [
+      { title: "오늘 출석", description: `${att.length}명` },
+      { title: "이번 주 신규", description: `${nw.length}명` },
+      { title: "만료 임박(7일)", description: `${exp.length}명` },
+      { title: "휴면 회원(2주+)", description: `${dorm.length}명` },
+    ],
+    buttons: [btnMsg("오늘 출석 명단"), btnMsg("만료 임박 명단")],
+  } }], ADMIN_MENU));
+});
+
 // ── ① 매일 스케줄러(인프로세스) ──
 // 매일 SCAN_HOUR_KST 시각에 리워드·재등록 스캔 실행. 하루 1회만.
 // 주의: Render 무료 인스턴스는 미사용 시 잠들어 인프로세스 타이머가 안 뜰 수 있음.
@@ -677,7 +787,8 @@ function schedulerTick() {
     const rewards = scanRewards();
     const renewals = scanRenewals();
     const ptReminders = scanReservationReminders();
-    console.log(`[스케줄러 ${dateStr} ${String(hh).padStart(2, "0")}시 KST] 리워드 ${rewards.length}건 / 재등록 ${renewals.length}건 / PT전날리마인드 ${ptReminders.length}건 (SEND_ENABLED=${SEND_ENABLED})`);
+    const dormant = scanDormant();
+    console.log(`[스케줄러 ${dateStr} ${String(hh).padStart(2, "0")}시 KST] 리워드 ${rewards.length} / 재등록 ${renewals.length} / PT전날 ${ptReminders.length} / 휴면 ${dormant.length} (SEND_ENABLED=${SEND_ENABLED})`);
   }
 }
 setInterval(schedulerTick, 60 * 1000); // 1분마다 시각 체크
