@@ -356,6 +356,70 @@ function newLeads() { return LEADS.filter((l) => l.status === "신규"); }
 // 데모 시드(사장님 대시보드에 바로 보이도록 1건)
 createLead({ name: "이서준", phone: "01033332222", interest: "다이어트" });
 
+// ── ⑥ 프론트데스크 대체: 신청 접수(정지·환불·양도·정보변경·대여·분실물·주차) ──
+// 데스크가 종이/전화로 받던 각종 신청을 챗봇으로 받아 사장님 대시보드에 쌓음.
+const REQUESTS = [];
+let _reqSeq = 1;
+function nowKstStr() { return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace("T", " "); }
+function createRequest({ type, name, phone, detail }) {
+  const r = { id: "Q" + (_reqSeq++), type, name: name || "고객", phone: phone || null, detail: detail || null, at: nowKstStr(), status: "접수" };
+  REQUESTS.push(r);
+  return r;
+}
+function newRequests() { return REQUESTS.filter((r) => r.status === "접수"); }
+function addDays(baseYmd, days) { return new Date(Date.parse(baseYmd + "T12:00:00+09:00") + days * 86400000).toISOString().slice(0, 10); }
+function parseDays(s) { const m = (s || "").match(/(\d{1,3})\s*일/); return m ? parseInt(m[1], 10) : null; }
+
+// ── 회원권 일시정지(홀딩) — 정지 일수만큼 만료일 연기 ──
+function holdMembership(phone, days) {
+  const mem = MEMBERS[phone];
+  const today = kstDate(0);
+  const base = mem.membership.expire > today ? mem.membership.expire : today;
+  const newExpire = addDays(base, days);
+  mem.membership.expire = newExpire;
+  if (renewalLog[phone]) renewalLog[phone].clear();
+  return newExpire;
+}
+
+// ── GX(그룹수업) 시간표 + 예약 ──
+const GX_SCHEDULE = [
+  { id: "GX1", name: "스피닝", time: "10:00", instructor: "제니", cap: 12 },
+  { id: "GX2", name: "요가", time: "12:00", instructor: "하나", cap: 15 },
+  { id: "GX3", name: "필라테스", time: "18:00", instructor: "수민", cap: 10 },
+  { id: "GX4", name: "줌바", time: "20:00", instructor: "리아", cap: 20 },
+];
+const GX_BOOKINGS = {}; // gxId -> Set(phone)
+function gxBookedCount(id) { return GX_BOOKINGS[id] ? GX_BOOKINGS[id].size : 0; }
+function findGx(s) { return GX_SCHEDULE.find((c) => (s || "").includes(c.name)) || null; }
+function bookGx(id, phone) {
+  GX_BOOKINGS[id] = GX_BOOKINGS[id] || new Set();
+  if (GX_BOOKINGS[id].has(phone)) return { ok: true, already: true };
+  const cls = GX_SCHEDULE.find((c) => c.id === id);
+  if (gxBookedCount(id) >= cls.cap) return { ok: false, full: true };
+  GX_BOOKINGS[id].add(phone);
+  return { ok: true };
+}
+GX_BOOKINGS["GX1"] = new Set(["01099998888", "01066665555"]); // 데모 시드
+
+// ── 공지·운영 안내(사장님이 등록) ──
+const NOTICES = [
+  { title: "청소 시간", body: "매일 14:00~14:30 헬스존 청소로 이용이 제한됩니다." },
+  { title: "단축 운영", body: "7/17(금)은 시설 점검으로 22:00 조기 마감합니다." },
+];
+
+// ── 락커·대여 ──
+const RENTAL_ITEMS = { "락커": "월 20,000원 · 데스크에서 배정", "운동복": "1회 2,000원", "수건": "무료 (1일 2매)" };
+
+// ── 분실물(보관 중) ──
+const LOSTFOUND = [
+  { item: "블루투스 이어폰(흰색)", where: "GX룸", date: kstDate(2) },
+  { item: "삼성 텀블러(검정)", where: "샤워실", date: kstDate(1) },
+];
+
+// ── 주차 등록 ──
+const PARKING = {}; // phone -> car number
+function parseCar(s) { const m = (s || "").replace(/\s/g, "").match(/\d{2,3}[가-힣]\d{4}/); return m ? m[0] : null; }
+
 // ── 스킬 응답 빌더 ──
 const skill = (outputs, quickReplies) => {
   const template = { outputs };
@@ -523,9 +587,9 @@ app.post("/skill/welcome", (req, res) => {
   const m = findMember(req.body);
   const hello = m ? `${m.name} 회원님, 안녕하세요! ${GYM}입니다 💪` : `안녕하세요! ${GYM}입니다 💪`;
   const menu = [
-    qr("회원권 조회", "내 회원권 조회"), qr("PT 예약", "PT 예약할래"), qr("출석 체크", "출석"),
-    qr("무료 상담 신청", "무료 상담 신청"), qr("가격 안내", "가격 알려줘"), qr("시설 안내", "시설 안내"),
-    qr("강사 소개", "강사 소개"), qr("이달의 이벤트", "이벤트"), qr("상담원 연결", "상담원 연결"),
+    qr("회원권 조회", "내 회원권 조회"), qr("PT 예약", "PT 예약할래"), qr("수업 시간표", "수업 시간표"),
+    qr("출석 체크", "출석"), qr("무료 상담 신청", "무료 상담 신청"), qr("가격 안내", "가격 알려줘"),
+    qr("시설 안내", "시설 안내"), qr("공지사항", "공지사항"), qr("각종 신청", "신청"), qr("상담원 연결", "상담원 연결"),
   ];
   res.json(skill([{ basicCard: {
     title: hello,
@@ -719,6 +783,138 @@ app.post("/skill/lead", (req, res) => {
   } }], MENU));
 });
 
+// ── 회원권 일시정지(홀딩) 신청 스킬 ──
+app.post("/skill/hold", (req, res) => {
+  const m = findMember(req.body);
+  const utter = req.body?.userRequest?.utterance || "";
+  if (!m) return res.json(skill([{ basicCard: {
+    title: "⏸️ 회원권 일시정지 신청",
+    description: "여행·부상 등으로 잠시 쉬실 때 회원권을 정지할 수 있어요.\n등록 전화번호와 정지 일수를 함께 남겨주세요.\n\n예) 일시정지 01012345678 14일",
+    buttons: [btnMsg("회원권 조회")],
+  } }], MENU));
+  const days = parseDays(utter);
+  if (!days) return res.json(skill([text(`${m.name} 회원님, 며칠간 정지할까요? 일수를 함께 입력해 주세요.\n예) 일시정지 ${m.phone} 14일`)],
+    [qr("7일", `일시정지 ${m.phone} 7일`), qr("14일", `일시정지 ${m.phone} 14일`), qr("30일", `일시정지 ${m.phone} 30일`)]));
+  const newExpire = holdMembership(m.phone, days);
+  const r = createRequest({ type: "일시정지", name: m.name, phone: m.phone, detail: `${days}일` });
+  sendMessage("owner", { channel: "알림톡(정보성)", kind: "hold", message: `[${GYM}] 일시정지 신청 · ${m.name}(${m.phone}) · ${days}일 · 접수 ${r.id}` });
+  res.json(skill([{ basicCard: {
+    title: "✅ 일시정지 신청 완료",
+    description: `${m.name} 회원님 · ${days}일 정지\n· 만료일이 ${newExpire}로 연장됐어요\n· 접수번호: ${r.id}\n\n정지 기간 종료 후 자동 재개됩니다.`,
+    buttons: [btnMsg("회원권 조회")],
+  } }], MENU));
+});
+
+// ── GX(그룹수업) 시간표 조회 + 예약 스킬 ──
+app.post("/skill/gx", (req, res) => {
+  const utter = req.body?.userRequest?.utterance || "";
+  const m = findMember(req.body);
+  const cls = findGx(utter);
+  if (cls && /(예약|신청|등록)/.test(utter)) {
+    if (!m) return res.json(skill([text(`${cls.name} 수업 예약을 위해 전화번호를 함께 입력해 주세요.\n예) ${cls.name} 예약 01012345678`)], [qr("시간표 보기", "수업 시간표")]));
+    const r = bookGx(cls.id, m.phone);
+    if (r.full) return res.json(skill([text(`😢 ${cls.name}(${cls.time}) 수업은 정원(${cls.cap}명)이 찼어요. 다른 수업을 선택해 주세요.`)], [qr("시간표 보기", "수업 시간표")]));
+    return res.json(skill([{ basicCard: {
+      title: r.already ? "이미 예약된 수업이에요" : "✅ 수업 예약 완료",
+      description: `${m.name}님 · ${cls.name} ${cls.time}\n강사: ${cls.instructor}\n현재 ${gxBookedCount(cls.id)}/${cls.cap}명`,
+      buttons: [btnMsg("수업 시간표")],
+    } }], MENU));
+  }
+  return res.json(skill([{ listCard: {
+    header: { title: "🧘 오늘의 그룹수업(GX) 시간표" },
+    items: GX_SCHEDULE.map((c) => ({ title: `${c.time} ${c.name}`, description: `${c.instructor} · ${gxBookedCount(c.id)}/${c.cap}명` })),
+    buttons: [btnMsg("스피닝 예약"), btnMsg("요가 예약")],
+  } }], [qr("스피닝 예약", "스피닝 예약"), qr("요가 예약", "요가 예약"), qr("필라테스 예약", "필라테스 예약")]));
+});
+
+// ── 공지·운영 안내 스킬 ──
+app.post("/skill/notice", (_req, res) => {
+  if (!NOTICES.length) return res.json(skill([text("현재 등록된 공지사항이 없어요. 정상 운영 중입니다 😊")], MENU));
+  return res.json(skill([{ listCard: {
+    header: { title: `📢 ${GYM} 공지사항` },
+    items: NOTICES.slice(0, 5).map((n) => ({ title: n.title, description: n.body })),
+    buttons: [btnMsg("영업시간"), btnMsg("가격 안내")],
+  } }], MENU));
+});
+
+// ── 락커·대여 안내/신청 스킬 ──
+app.post("/skill/rental", (req, res) => {
+  const utter = req.body?.userRequest?.utterance || "";
+  const m = findMember(req.body);
+  if (/(신청|대여할|빌|등록)/.test(utter)) {
+    if (!m) return res.json(skill([text("대여 신청을 위해 전화번호를 함께 입력해 주세요.\n예) 락커 신청 01012345678")], [qr("대여 안내", "대여 안내")]));
+    const item = ["락커", "운동복", "수건"].find((k) => utter.includes(k)) || "락커";
+    const r = createRequest({ type: "대여신청", name: m.name, phone: m.phone, detail: item });
+    return res.json(skill([{ basicCard: {
+      title: "✅ 대여 신청 접수",
+      description: `${m.name}님 · ${item} 대여 신청\n· 접수번호: ${r.id}\n데스크에서 배정 후 안내드릴게요.`,
+      buttons: [btnMsg("대여 안내")],
+    } }], MENU));
+  }
+  return res.json(skill([{ listCard: {
+    header: { title: "🔐 락커·대여 안내" },
+    items: Object.entries(RENTAL_ITEMS).map(([k, v]) => ({ title: k, description: v })),
+    buttons: [btnMsg("락커 신청"), btnMsg("운동복 신청")],
+  } }], MENU));
+});
+
+// ── 분실물 문의/신고 스킬 ──
+app.post("/skill/lostfound", (req, res) => {
+  const utter = req.body?.userRequest?.utterance || "";
+  const m = findMember(req.body);
+  if (/(신고|잃|두고|분실했|맡)/.test(utter) && !/(목록|보관|조회|있)/.test(utter)) {
+    const phone = m ? m.phone : (normPhone((utter.match(/01\d{8,9}/) || [])[0]) || null);
+    const r = createRequest({ type: "분실물신고", name: m ? m.name : "고객", phone, detail: utter.replace(/01\d{8,9}/g, "").trim().slice(0, 40) });
+    return res.json(skill([{ basicCard: {
+      title: "✅ 분실물 신고 접수",
+      description: `접수번호: ${r.id}\n보관 중인 물품이 확인되면 연락드릴게요.\n\n현재 보관 중인 분실물도 아래에서 확인하실 수 있어요.`,
+      buttons: [btnMsg("분실물 목록")],
+    } }], MENU));
+  }
+  if (!LOSTFOUND.length) return res.json(skill([text("현재 보관 중인 분실물이 없어요.")], [qr("분실물 신고", "분실물 신고")]));
+  return res.json(skill([{ listCard: {
+    header: { title: "🧳 보관 중인 분실물" },
+    items: LOSTFOUND.slice(0, 5).map((l) => ({ title: l.item, description: `${l.where} · ${l.date} 발견` })),
+    buttons: [btnMsg("분실물 신고")],
+  } }], MENU));
+});
+
+// ── 주차 등록 스킬 ──
+app.post("/skill/parking", (req, res) => {
+  const utter = req.body?.userRequest?.utterance || "";
+  const m = findMember(req.body);
+  const car = parseCar(utter);
+  if (!car) return res.json(skill([{ basicCard: {
+    title: "🚗 주차 등록",
+    description: "차량번호를 함께 입력해 주세요. 지하주차장 2시간 무료 등록됩니다.\n\n예) 주차등록 12가3456",
+    buttons: [btnMsg("주차 안내")],
+  } }], MENU));
+  if (m) PARKING[m.phone] = car;
+  const r = createRequest({ type: "주차등록", name: m ? m.name : "고객", phone: m ? m.phone : null, detail: car });
+  return res.json(skill([{ basicCard: {
+    title: "✅ 주차 등록 완료",
+    description: `차량번호: ${car}\n2시간 무료 주차가 등록됐어요.\n접수번호: ${r.id}`,
+    buttons: [btnMsg("주차 안내")],
+  } }], MENU));
+});
+
+// ── 각종 신청 통합(환불·양도·정보변경) 스킬 ──
+app.post("/skill/request", (req, res) => {
+  const utter = req.body?.userRequest?.utterance || "";
+  const m = findMember(req.body);
+  const type = /환불/.test(utter) ? "환불" : /양도/.test(utter) ? "양도" : /(정보변경|연락처|번호변경|정보 변경)/.test(utter) ? "정보변경" : null;
+  if (!type) return res.json(skill([text("어떤 신청을 도와드릴까요? 아래에서 선택해 주세요.")],
+    [qr("환불 신청", "환불 신청"), qr("양도 신청", "양도 신청"), qr("정보 변경", "정보 변경"), qr("일시정지", "일시정지 신청")]));
+  if (!m) return res.json(skill([text(`${type} 신청을 위해 등록 전화번호를 함께 입력해 주세요.\n예) ${type} 신청 01012345678`)], MENU));
+  const r = createRequest({ type, name: m.name, phone: m.phone, detail: utter.replace(/01\d{8,9}/g, "").trim().slice(0, 40) });
+  sendMessage("owner", { channel: "알림톡(정보성)", kind: "request", message: `[${GYM}] ${type} 신청 · ${m.name}(${m.phone}) · 접수 ${r.id}` });
+  return res.json(skill([{ basicCard: {
+    title: `✅ ${type} 신청 접수`,
+    description: `${m.name}님 · ${type} 신청\n· 접수번호: ${r.id}\n담당자가 확인 후 연락드릴게요.`,
+    buttons: [btnMsg("회원권 조회")],
+  } }], MENU));
+});
+
 app.post("/skill/faq", (req, res) => {
   const p = req.body?.action?.params || {};
   const utter = req.body?.userRequest?.utterance || "";
@@ -774,11 +970,19 @@ app.post("/skill/fallback", (_req, res) => {
 
 // ── ③ 사장님용 관리자 조회 스킬 ──
 // 주의(운영): 실제 배포 시 이 블록은 사장님 전용 채널/봇 또는 관리자 인증 뒤에 두세요.
-const ADMIN_MENU = [qr("오늘 출석", "오늘 출석 명단"), qr("이번 주 신규", "이번 주 신규 등록"), qr("만료 임박", "만료 임박 명단"), qr("휴면 회원", "휴면 회원 명단"), qr("상담 접수", "상담 접수 현황")];
+const ADMIN_MENU = [qr("오늘 출석", "오늘 출석 명단"), qr("이번 주 신규", "이번 주 신규 등록"), qr("만료 임박", "만료 임박 명단"), qr("휴면 회원", "휴면 회원 명단"), qr("상담 접수", "상담 접수 현황"), qr("요청 접수", "요청 접수 현황")];
 app.post("/skill/admin", (req, res) => {
   const utter = req.body?.userRequest?.utterance || "";
   const att = todayAttendanceList();
-  if (/접수|리드|상담\s*현황|신청\s*현황/.test(utter)) {
+  if (/요청/.test(utter)) {
+    const rs = newRequests();
+    return res.json(skill([{ itemCard: {
+      head: { title: `🗂️ 신규 요청 ${rs.length}건 (정지·환불·대여·분실물·주차 등)` },
+      itemList: rs.length ? rs.slice(-10).reverse().map((r) => ({ title: `${r.type} · ${r.name}`, description: `${r.phone || "-"}${r.detail ? " · " + r.detail : ""} · ${r.at}` })) : [{ title: "없음", description: "접수된 요청이 없어요" }],
+      buttons: [btnMsg("상담 접수 현황")],
+    } }], ADMIN_MENU));
+  }
+  if (/상담|리드/.test(utter)) {
     const ls = newLeads();
     return res.json(skill([{ itemCard: {
       head: { title: `🎟️ 신규 상담 신청 ${ls.length}건` },
@@ -808,17 +1012,17 @@ app.post("/skill/admin", (req, res) => {
     } }], ADMIN_MENU));
   }
   // 요약 대시보드
-  const nw = newThisWeek(), exp = expiringSoon(7), dorm = dormantMembers(14), lead = newLeads();
+  const nw = newThisWeek(), exp = expiringSoon(7), dorm = dormantMembers(14), lead = newLeads(), reqs = newRequests();
   res.json(skill([{ itemCard: {
     head: { title: `👔 ${GYM} 사장님 대시보드` },
     itemList: [
       { title: "오늘 출석", description: `${att.length}명` },
       { title: "이번 주 신규", description: `${nw.length}명` },
       { title: "상담 신청(신규)", description: `${lead.length}건` },
-      { title: "만료 임박(7일)", description: `${exp.length}명` },
-      { title: "휴면 회원(2주+)", description: `${dorm.length}명` },
+      { title: "요청 접수(정지·환불 등)", description: `${reqs.length}건` },
+      { title: "만료 임박 / 휴면", description: `${exp.length}명 / ${dorm.length}명` },
     ],
-    buttons: [btnMsg("상담 접수 현황"), btnMsg("오늘 출석 명단")],
+    buttons: [btnMsg("상담 접수 현황"), btnMsg("요청 접수 현황")],
   } }], ADMIN_MENU));
 });
 
