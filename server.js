@@ -67,16 +67,16 @@ const ATT = {};
 ATT["01012345678"] = new Set([kstDate(0), kstDate(1), kstDate(2), kstDate(3), kstDate(4), kstDate(5), kstDate(6), kstDate(7)]); // 홍길동: 오늘 포함 연속
 ATT["01099998888"] = new Set([kstDate(3), kstDate(8), kstDate(12)]); // 김영희: 뜸함
 // ③④ 관리자 조회·휴면 데모용 시드
-ATT["01077776666"] = new Set([kstDate(0), kstDate(1)]);      // 박민수: 오늘 출석
-ATT["01055554444"] = new Set([kstDate(0)]);                   // 정해나: 오늘 출석
+ATT["01077776666"] = new Set([kstDate(0), kstDate(1)]); // 박민수: 오늘 출석
+ATT["01055554444"] = new Set([kstDate(0)]); // 정해나: 오늘 출석
 MEMBERS["01044443333"] = { name: "강휴면", membership: { type: "헬스 6개월", expire: kstDatePlus(40) }, pt: { remain: 0, trainer: null }, locker: false }; // 휴면 데모 회원
 ATT["01044443333"] = new Set([kstDate(18), kstDate(20), kstDate(25)]); // 강휴면: 18일째 미방문
 // 가입일(이번 주 신규 등록 집계용). 데모.
 MEMBERS["01012345678"].joinDate = kstDate(95);
 MEMBERS["01099998888"].joinDate = kstDate(150);
-MEMBERS["01077776666"].joinDate = kstDate(2);   // 이번 주 신규
+MEMBERS["01077776666"].joinDate = kstDate(2); // 이번 주 신규
 MEMBERS["01066665555"].joinDate = kstDate(60);
-MEMBERS["01055554444"].joinDate = kstDate(4);   // 이번 주 신규
+MEMBERS["01055554444"].joinDate = kstDate(4); // 이번 주 신규
 MEMBERS["01044443333"].joinDate = kstDate(200);
 function streakOf(set) {
   if (!set || !set.size) return 0;
@@ -102,7 +102,7 @@ function sendMessage(phone, payload) {
     return { ok: true, dryRun: true, note: "SEND_ENABLED!=true (실제 발송 안 함)" };
   }
   // TODO: 실제 발송 — 카카오 비즈메시지 알림톡/친구톡 API(또는 발송대행사) 호출.
-  //       템플릿 사전 승인 필요. 채널 연결되면 아래를 실제 API 호출로 교체.
+  // 템플릿 사전 승인 필요. 채널 연결되면 아래를 실제 API 호출로 교체.
   console.log("[SEND·발송켜짐(stub)] " + line);
   return { ok: true, sent: true, note: "stub-real (실 API 연결 필요)" };
 }
@@ -136,14 +136,12 @@ function scanRewards() {
 
 // ── ① 회원 재등록 자동화 엔진 ──────────────────────────────
 // 만료 임박 회원에게 D-7 / D-3 / D-day 단계별 리마인드 + 원클릭 연장 링크.
-// 마일스톤 엔진과 동일한 패턴(스캔 + 중복방지 로그 + sendMessage 게이트웨이).
 const RENEWAL_STAGES = [
   { key: "dday", dday: 0, label: "D-day", channel: "알림톡(정보성)" },
   { key: "d3", dday: 3, label: "D-3", channel: "알림톡(정보성)" },
   { key: "d7", dday: 7, label: "D-7", channel: "알림톡(정보성)" },
 ]; // dday 오름차순 유지
 
-// 연장 상품(재등록 옵션). 실제 결제 연동 전까지는 데모 연장으로 처리.
 const RENEW_PLANS = [
   { key: "1m", label: "헬스 1개월", price: 99000, months: 1 },
   { key: "3m", label: "헬스 3개월", price: 259000, months: 3 },
@@ -151,7 +149,6 @@ const RENEW_PLANS = [
 ];
 const won = (n) => n.toLocaleString("ko-KR") + "원";
 
-// 서명된 원클릭 링크(전화번호 변조 방지)
 function renewToken(phone) {
   return crypto.createHmac("sha256", RENEW_SECRET).update(String(phone)).digest("hex").slice(0, 12);
 }
@@ -162,7 +159,6 @@ function validRenewToken(phone, t) {
   return t && renewToken(phone) === t;
 }
 
-// 현재 dday에 해당하는 리마인드 단계(가장 임박한 브래킷). 스캔이 하루 걸러도 중복/누락 없이 동작.
 function stageForDday(dday) {
   for (const st of RENEWAL_STAGES) { // dday 오름차순
     if (dday <= st.dday) return st;
@@ -195,7 +191,6 @@ function scanRenewals() {
   return out;
 }
 
-// 매월 갱신: 오늘 또는 현재 만료일 중 더 늦은 날짜 기준으로 months 만큼 연장
 function addMonths(baseYmd, months) {
   const [y, mo, d] = baseYmd.split("-").map(Number);
   const dt = new Date(Date.UTC(y, mo - 1 + months, d));
@@ -213,14 +208,12 @@ function extendMembership(phone, plan) {
 }
 
 // ── ② PT 예약 고도화 엔진 ──────────────────────────────
-// 강사별 실시간 가능시간 조회 · 예약 확정/취소 · 내 예약 조회 · 수업 전날 리마인드.
 const TRAINERS = {
   "김코치": { name: "김코치", specialty: "웨이트·체형교정", hours: [10, 11, 14, 15, 16, 17, 18, 19] },
   "이코치": { name: "이코치", specialty: "다이어트·재활", hours: [9, 10, 11, 13, 14, 15, 16] },
   "박코치": { name: "박코치", specialty: "필라테스·바디프로필", hours: [11, 12, 13, 17, 18, 19, 20] },
 };
 const TRAINER_NAMES = Object.keys(TRAINERS);
-// 예약 저장소(데모: 인메모리). 실제는 DB로 교체.
 const RESERVATIONS = [];
 let _resSeq = 1;
 function newResId() { return "R" + (_resSeq++); }
@@ -230,7 +223,6 @@ const nowHourKst = () => new Date(Date.now() + 9 * 3600000).getUTCHours();
 function bookedHours(trainer, date) {
   return new Set(RESERVATIONS.filter((r) => r.status === "confirmed" && r.trainer === trainer && r.date === date).map((r) => r.time));
 }
-// 강사·날짜의 실시간 가능 시간(이미 예약된 슬롯·지난 시간 제외)
 function availableHours(trainer, date) {
   const tr = TRAINERS[trainer];
   if (!tr) return [];
@@ -251,7 +243,6 @@ function createReservation(m, trainer, date, time) {
   return r;
 }
 
-// 발화에서 강사/날짜/시간 파싱(전화번호는 미리 제거)
 function parseTrainer(s) { return TRAINER_NAMES.find((t) => (s || "").includes(t)) || null; }
 function parseDate(s) {
   s = s || "";
@@ -273,7 +264,6 @@ function parseHour(s) {
   return null;
 }
 
-// 수업 전날 리마인드 스캔(스케줄러가 매일 실행)
 function scanReservationReminders() {
   const tomorrow = kstDatePlus(1);
   const out = [];
@@ -288,7 +278,7 @@ function scanReservationReminders() {
   return out;
 }
 
-// 데모 시드: 내일 홍길동-김코치 19시(전날 리마인드 데모용) + 최지우-이코치 모레
+// 데모 시드
 RESERVATIONS.push({ id: newResId(), phone: "01012345678", name: "홍길동", trainer: "김코치", date: kstDatePlus(1), time: "19:00", status: "confirmed", remindedDayBefore: false });
 RESERVATIONS.push({ id: newResId(), phone: "01066665555", name: "최지우", trainer: "이코치", date: kstDatePlus(2), time: "14:00", status: "confirmed", remindedDayBefore: false });
 
@@ -319,7 +309,7 @@ function dormantMembers(thresholdDays = 14) {
   for (const [phone, mem] of Object.entries(MEMBERS)) {
     const lv = lastVisit(phone);
     if (lv) { const d = daysSince(lv); if (d >= thresholdDays) out.push({ phone, name: mem.name, lastVisit: lv, days: d }); }
-    else if (mem.joinDate && daysSince(mem.joinDate) >= thresholdDays) out.push({ phone, name: mem.name, lastVisit: null, days: null }); // 가입만 하고 방문 이력 없음
+    else if (mem.joinDate && daysSince(mem.joinDate) >= thresholdDays) out.push({ phone, name: mem.name, lastVisit: null, days: null });
   }
   return out.sort((a, b) => (b.days || 9999) - (a.days || 9999));
 }
@@ -329,7 +319,7 @@ function scanDormant() {
   const todayIdx = dayIdx(kstDate(0));
   const out = [];
   for (const d of seg) {
-    if (dormantLog[d.phone] && todayIdx - dormantLog[d.phone] < 7) continue; // 최근 7일 내 이미 보냄
+    if (dormantLog[d.phone] && todayIdx - dormantLog[d.phone] < 7) continue;
     dormantLog[d.phone] = todayIdx;
     const msg = d.lastVisit
       ? `[${GYM}] ${d.name}님, ${d.days}일째 안 보이셔서 걱정돼요 🥺\n오랜만에 몸 풀러 오세요! 이번 주 방문 시 [단백질바 증정] 🎁`
@@ -339,6 +329,32 @@ function scanDormant() {
   }
   return out;
 }
+
+// ── ⑤ 리드(무료 상담/체험 신청) 수집 엔진 ──────────────────
+// 챗봇에서 성함·연락처·관심분야를 받아 접수 → 사장님 대시보드에 쌓고, 사장님에게 신규 리드 알림(dry-run).
+// 실제 CRM/DB로 교체하기 전까지는 인메모리 저장.
+const LEADS = [];
+let _leadSeq = 1;
+const LEAD_INTERESTS = ["다이어트", "체형교정", "근력", "재활", "바디프로필", "필라테스", "PT", "회원권"];
+const LEAD_KEYWORDS = ["상담신청", "상담 신청", "무료상담", "무료 상담", "무료체험", "무료 체험", "체험신청", "체험 신청", "상담", "체험", "신청", "문의", "예약"];
+function parseInterest(s) { return LEAD_INTERESTS.find((k) => (s || "").includes(k)) || null; }
+function parseLeadName(s) {
+  // 전화번호·신청 키워드·관심분야 단어를 제거한 뒤 남는 첫 한글 토큰(2~4자)을 성함으로.
+  let c = (s || "").replace(/01\d{8,9}/g, " ");
+  [...LEAD_KEYWORDS, ...LEAD_INTERESTS].forEach((k) => { c = c.split(k).join(" "); });
+  const m = c.match(/[가-힣]{2,4}/);
+  return m ? m[0] : null;
+}
+const maskPhone = (p) => (p ? String(p).replace(/(\d{3})(\d{3,4})(\d{4})/, "$1-****-$3") : p);
+function createLead({ name, phone, interest }) {
+  const at = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace("T", " ");
+  const lead = { id: "L" + (_leadSeq++), name: name || "고객", phone, interest: interest || null, at, status: "신규" };
+  LEADS.push(lead);
+  return lead;
+}
+function newLeads() { return LEADS.filter((l) => l.status === "신규"); }
+// 데모 시드(사장님 대시보드에 바로 보이도록 1건)
+createLead({ name: "이서준", phone: "01033332222", interest: "다이어트" });
 
 // ── 스킬 응답 빌더 ──
 const skill = (outputs, quickReplies) => {
@@ -398,14 +414,14 @@ document.getElementById("cd").textContent=j.expiresIn+"초 후 코드 변경";}c
 tick();setInterval(tick,1000);</script></body></html>`);
 });
 
-// ── 관리자: 마일스톤 스캔(스케줄러가 매일 호출) ──
+// ── 관리자: 마일스톤 스캔 ──
 app.get("/admin/reward-scan", (_req, res) => {
   const rewards = scanRewards();
   res.json({ scannedAt: new Date().toISOString(), count: rewards.length, rewards,
     note: "매일 새벽 스케줄러가 이 스캔을 실행. 실제 발송은 sendMessage() 스텁을 카카오 비즈메시지(알림톡/친구톡) 또는 발송대행사 API로 교체하세요. 템플릿 사전 승인 필요." });
 });
 
-// ── ① 관리자: 재등록 리마인드 스캔(스케줄러/외부 cron이 매일 호출) ──
+// ── ① 관리자: 재등록 리마인드 스캔 ──
 app.get("/admin/renewal-scan", (_req, res) => {
   const reminders = scanRenewals();
   res.json({
@@ -419,21 +435,21 @@ app.get("/admin/renewal-scan", (_req, res) => {
   });
 });
 
-// ── ② 관리자: PT 수업 전날 리마인드 스캔(스케줄러/외부 cron이 매일 호출) ──
+// ── ② 관리자: PT 수업 전날 리마인드 스캔 ──
 app.get("/admin/reservation-scan", (_req, res) => {
   const reminders = scanReservationReminders();
   res.json({ scannedAt: new Date().toISOString(), sendEnabled: SEND_ENABLED, count: reminders.length, reminders,
     note: SEND_ENABLED ? "SEND_ENABLED=true — 실제 발송." : "dry-run 로그만. 채널 연결·템플릿 승인 후 SEND_ENABLED=true." });
 });
 
-// ── ④ 관리자: 휴면회원 리마인드 스캔(스케줄러/외부 cron이 매일 호출) ──
+// ── ④ 관리자: 휴면회원 리마인드 스캔 ──
 app.get("/admin/dormant-scan", (_req, res) => {
   const sent = scanDormant();
   res.json({ scannedAt: new Date().toISOString(), sendEnabled: SEND_ENABLED, count: sent.length, dormant: sent,
     note: SEND_ENABLED ? "SEND_ENABLED=true — 실제 발송." : "dry-run 로그만. 채널 연결·템플릿 승인 후 SEND_ENABLED=true." });
 });
 
-// ── 관리자: 스캔을 한 번에(하루 1회 실행용) — 리워드/재등록/PT리마인드/휴면 ──
+// ── 관리자: 스캔을 한 번에 ──
 app.get("/admin/daily-scan", (_req, res) => {
   const rewards = scanRewards();
   const renewals = scanRenewals();
@@ -444,6 +460,11 @@ app.get("/admin/daily-scan", (_req, res) => {
     renewals: { count: renewals.length, items: renewals },
     ptReminders: { count: ptReminders.length, items: ptReminders },
     dormant: { count: dormant.length, items: dormant } });
+});
+
+// ── ⑤ 관리자: 리드(상담 신청) 목록 조회(JSON) ──
+app.get("/admin/leads", (_req, res) => {
+  res.json({ scannedAt: new Date().toISOString(), total: LEADS.length, newCount: newLeads().length, leads: LEADS });
 });
 
 // ── ① 원클릭 연장 페이지 ──
@@ -458,11 +479,11 @@ app.get("/renew", (req, res) => {
   const dday = ddayOf(mem.membership.expire);
   const plans = RENEW_PLANS.map((p) =>
     `<form method="POST" action="/renew/confirm" style="margin:0">
-       <input type="hidden" name="phone" value="${phone}">
-       <input type="hidden" name="t" value="${t}">
-       <input type="hidden" name="plan" value="${p.key}">
-       <button type="submit" class="plan"><span>${p.label}</span><b>${won(p.price)}</b></button>
-     </form>`).join("");
+      <input type="hidden" name="phone" value="${phone}">
+      <input type="hidden" name="t" value="${t}">
+      <input type="hidden" name="plan" value="${p.key}">
+      <button type="submit" class="plan"><span>${p.label}</span><b>${won(p.price)}</b></button>
+    </form>`).join("");
   res.set("Content-Type", "text/html; charset=utf-8").send(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>회원권 연장</title>
 <style>*{box-sizing:border-box}body{font-family:system-ui,sans-serif;background:#F4F6F8;color:#1B2430;margin:0;padding:24px;max-width:460px;margin:0 auto}
@@ -478,7 +499,6 @@ h1{font-size:20px;color:#FFB020}.card{background:#fff;border-radius:16px;padding
 </body></html>`);
 });
 
-// 폼 전송 파싱용
 app.use(express.urlencoded({ extended: false }));
 app.post("/renew/confirm", (req, res) => {
   const phone = normPhone(req.body.phone);
@@ -504,13 +524,13 @@ app.post("/skill/welcome", (req, res) => {
   const hello = m ? `${m.name} 회원님, 안녕하세요! ${GYM}입니다 💪` : `안녕하세요! ${GYM}입니다 💪`;
   const menu = [
     qr("회원권 조회", "내 회원권 조회"), qr("PT 예약", "PT 예약할래"), qr("출석 체크", "출석"),
-    qr("가격 안내", "가격 알려줘"), qr("시설 안내", "시설 안내"), qr("강사 소개", "강사 소개"),
-    qr("이달의 이벤트", "이벤트"), qr("상담원 연결", "상담원 연결"),
+    qr("무료 상담 신청", "무료 상담 신청"), qr("가격 안내", "가격 알려줘"), qr("시설 안내", "시설 안내"),
+    qr("강사 소개", "강사 소개"), qr("이달의 이벤트", "이벤트"), qr("상담원 연결", "상담원 연결"),
   ];
   res.json(skill([{ basicCard: {
     title: hello,
     description: "무엇을 도와드릴까요?\n아래 메뉴를 누르거나 궁금한 점을 입력해 주세요 👇",
-    buttons: [btnMsg("가격 안내"), btnMsg("시설 안내"), btnMsg("상담원 연결")],
+    buttons: [btnMsg("가격 안내"), btnMsg("무료 상담 신청"), btnMsg("시설 안내")],
   } }], menu));
 });
 
@@ -525,7 +545,7 @@ app.post("/skill/membership", (req, res) => {
   if (!m) return res.json(skill([text("회원 정보를 찾지 못했어요. 등록하신 전화번호를 함께 입력해 주세요.\n예) 회원권 01012345678")], [qr("가격 안내", "가격 알려줘")]));
   const dday = ddayOf(m.membership.expire);
   const pt = m.pt.remain > 0 ? `${m.pt.remain}회 남음 (${m.pt.trainer})` : "없음";
-  const near = dday <= 7; // 만료 임박 시 연장 버튼을 웹링크로
+  const near = dday <= 7;
   const buttons = [btnMsg("출석 체크")];
   buttons.push(near ? btnLink("재등록/연장", renewLink(m.phone)) : btnMsg("재등록/연장"));
   res.json(skill([{ itemCard: {
@@ -541,7 +561,7 @@ app.post("/skill/membership", (req, res) => {
   } }], MENU));
 });
 
-// ── ① 재등록/연장 스킬(봇테스트용) ──
+// ── ① 재등록/연장 스킬 ──
 app.post("/skill/renew", (req, res) => {
   const m = findMember(req.body);
   if (!m) return res.json(skill([text("회원 정보를 찾지 못했어요. 등록하신 전화번호를 함께 입력해 주세요.\n예) 연장 01077776666")], [qr("가격 안내", "가격 알려줘")]));
@@ -606,10 +626,9 @@ app.post("/skill/reserve", (req, res) => {
   const body = req.body;
   const p = body?.action?.params || {};
   const utterRaw = body?.userRequest?.utterance || "";
-  const utter = utterRaw.replace(/01\d{8,9}/g, " "); // 전화번호 제거 후 파싱
+  const utter = utterRaw.replace(/01\d{8,9}/g, " ");
   const m = findMember(body);
 
-  // (A) 예약 취소
   if (/취소/.test(utter)) {
     const idm = utterRaw.match(/R\d+/i);
     let target = null;
@@ -632,7 +651,6 @@ app.post("/skill/reserve", (req, res) => {
     } }], RESERVE_MENU));
   }
 
-  // (B) 내 예약 조회
   if (/(내\s*예약|예약\s*조회|예약\s*내역|예약\s*확인)/.test(utter)) {
     if (!m) return res.json(skill([text("예약자 확인을 위해 전화번호를 함께 입력해 주세요.\n예) 내 예약 조회 01012345678")], RESERVE_MENU));
     const list = myReservations(m.phone);
@@ -644,7 +662,6 @@ app.post("/skill/reserve", (req, res) => {
     } }], RESERVE_MENU));
   }
 
-  // (C) 신규 예약 — 강사 → 날짜 → 시간 → 확정
   const trainer = parseTrainer(utter) || (TRAINERS[p.trainer] ? p.trainer : null);
   if (!trainer) {
     return res.json(skill([text("어떤 트레이너로 예약할까요? 전문 분야를 참고해 선택해 주세요 💪\n" +
@@ -665,7 +682,6 @@ app.post("/skill/reserve", (req, res) => {
     return res.json(skill([text(`${trainer} 트레이너 ${dateLabel(date)}(${date}) 가능 시간이에요.\n원하시는 시간을 선택해 주세요 ⏰`)],
       avail.map((h) => qr(hhmm(h), `${trainer} ${date} ${hhmm(h)} 예약`))));
   }
-  // 시간까지 지정됨 → 예약 확정
   if (!m) return res.json(skill([text(`예약을 확정하려면 예약자 전화번호를 함께 입력해 주세요.\n예) ${trainer} ${dateLabel(date)} ${time} 예약 01012345678`)], RESERVE_MENU));
   if (!avail.includes(parseInt(time, 10))) {
     return res.json(skill([text(`앗, ${trainer} 트레이너 ${dateLabel(date)} ${time}은(는) 방금 마감됐어요 😢\n다른 시간을 선택해 주세요.`)],
@@ -677,6 +693,30 @@ app.post("/skill/reserve", (req, res) => {
     description: `${m.name}님 · ${dateLabel(date)}(${date}) ${time}\n${trainer} (${TRAINERS[trainer].specialty})\n예약번호 ${r.id}\n수업 전날 리마인드를 보내드릴게요!`,
     buttons: [btnMsg(`예약취소 ${r.id} ${m.phone}`), btnMsg("내 예약 조회")],
   } }], RESERVE_MENU));
+});
+
+// ── ⑤ 무료 상담/체험 신청(리드 수집) 스킬 ──
+app.post("/skill/lead", (req, res) => {
+  const utterRaw = req.body?.userRequest?.utterance || "";
+  const params = req.body?.action?.params || {};
+  const phone = normPhone(params.phone || (utterRaw.match(/01\d{8,9}/) || [])[0]);
+  if (!phone) {
+    return res.json(skill([{ basicCard: {
+      title: "🎟️ 무료 상담·체험 신청",
+      description: "성함과 연락처, 관심분야를 함께 남겨주세요.\n담당 트레이너가 순차적으로 연락드릴게요!\n\n예) 상담신청 홍길동 01012345678 다이어트",
+      buttons: [btnMsg("가격 안내"), btnMsg("시설 안내")],
+    } }], [qr("가격 안내", "가격 알려줘"), qr("시설 안내", "시설 안내")]));
+  }
+  const name = parseLeadName(utterRaw) || params.name || "고객";
+  const interest = parseInterest(utterRaw) || params.interest || null;
+  const lead = createLead({ name, phone, interest });
+  sendMessage("owner", { channel: "알림톡(정보성)", kind: "lead",
+    message: `[${GYM}] 신규 상담 신청 · ${name}(${phone})${interest ? " · " + interest : ""} · 접수 ${lead.id}` });
+  res.json(skill([{ basicCard: {
+    title: "✅ 상담 신청이 접수됐어요!",
+    description: `${name}님 (${maskPhone(phone)})${interest ? "\n· 관심분야: " + interest : ""}\n· 접수번호: ${lead.id}\n\n영업일 기준 1일 이내에 담당자가 연락드릴게요. 감사합니다 🙌`,
+    buttons: [btnMsg("가격 안내"), btnMsg("시설 안내")],
+  } }], MENU));
 });
 
 app.post("/skill/faq", (req, res) => {
@@ -729,15 +769,23 @@ app.post("/skill/pt", (_req, res) => {
 
 app.post("/skill/fallback", (_req, res) => {
   res.json(skill([text("담당자가 정확히 안내드릴게요.\n상담 가능 시간(평일 10~20시)에 순차적으로 답변드립니다.\n성함과 연락처를 남겨주시겠어요?")],
-    [qr("상담 신청", "상담 신청합니다"), qr("처음으로", "메뉴")]));
+    [qr("무료 상담 신청", "무료 상담 신청"), qr("처음으로", "메뉴")]));
 });
 
 // ── ③ 사장님용 관리자 조회 스킬 ──
 // 주의(운영): 실제 배포 시 이 블록은 사장님 전용 채널/봇 또는 관리자 인증 뒤에 두세요.
-const ADMIN_MENU = [qr("오늘 출석", "오늘 출석 명단"), qr("이번 주 신규", "이번 주 신규 등록"), qr("만료 임박", "만료 임박 명단"), qr("휴면 회원", "휴면 회원 명단")];
+const ADMIN_MENU = [qr("오늘 출석", "오늘 출석 명단"), qr("이번 주 신규", "이번 주 신규 등록"), qr("만료 임박", "만료 임박 명단"), qr("휴면 회원", "휴면 회원 명단"), qr("상담 접수", "상담 접수 현황")];
 app.post("/skill/admin", (req, res) => {
   const utter = req.body?.userRequest?.utterance || "";
   const att = todayAttendanceList();
+  if (/접수|리드|상담\s*현황|신청\s*현황/.test(utter)) {
+    const ls = newLeads();
+    return res.json(skill([{ itemCard: {
+      head: { title: `🎟️ 신규 상담 신청 ${ls.length}건` },
+      itemList: ls.length ? ls.slice(-10).reverse().map((l) => ({ title: `${l.name}${l.interest ? " (" + l.interest + ")" : ""}`, description: `${l.phone} · ${l.at}` })) : [{ title: "없음", description: "접수된 상담이 없어요" }],
+      buttons: [btnMsg("오늘 출석 명단")],
+    } }], ADMIN_MENU));
+  }
   if (/출석/.test(utter)) {
     return res.json(skill([text(`📊 오늘 출석 ${att.length}명\n${att.length ? att.join(", ") : "아직 없음"}`)], ADMIN_MENU));
   }
@@ -760,23 +808,21 @@ app.post("/skill/admin", (req, res) => {
     } }], ADMIN_MENU));
   }
   // 요약 대시보드
-  const nw = newThisWeek(), exp = expiringSoon(7), dorm = dormantMembers(14);
+  const nw = newThisWeek(), exp = expiringSoon(7), dorm = dormantMembers(14), lead = newLeads();
   res.json(skill([{ itemCard: {
     head: { title: `👔 ${GYM} 사장님 대시보드` },
     itemList: [
       { title: "오늘 출석", description: `${att.length}명` },
       { title: "이번 주 신규", description: `${nw.length}명` },
+      { title: "상담 신청(신규)", description: `${lead.length}건` },
       { title: "만료 임박(7일)", description: `${exp.length}명` },
       { title: "휴면 회원(2주+)", description: `${dorm.length}명` },
     ],
-    buttons: [btnMsg("오늘 출석 명단"), btnMsg("만료 임박 명단")],
+    buttons: [btnMsg("상담 접수 현황"), btnMsg("오늘 출석 명단")],
   } }], ADMIN_MENU));
 });
 
-// ── ① 매일 스케줄러(인프로세스) ──
-// 매일 SCAN_HOUR_KST 시각에 리워드·재등록 스캔 실행. 하루 1회만.
-// 주의: Render 무료 인스턴스는 미사용 시 잠들어 인프로세스 타이머가 안 뜰 수 있음.
-//       안정적 운영은 외부 cron(예: cron-job.org)이 매일 GET /admin/daily-scan 을 호출하도록 설정 권장.
+// ── 매일 스케줄러(인프로세스) ──
 let _lastScanDate = null;
 function schedulerTick() {
   const nowKst = new Date(Date.now() + 9 * 3600000);
@@ -791,7 +837,7 @@ function schedulerTick() {
     console.log(`[스케줄러 ${dateStr} ${String(hh).padStart(2, "0")}시 KST] 리워드 ${rewards.length} / 재등록 ${renewals.length} / PT전날 ${ptReminders.length} / 휴면 ${dormant.length} (SEND_ENABLED=${SEND_ENABLED})`);
   }
 }
-setInterval(schedulerTick, 60 * 1000); // 1분마다 시각 체크
+setInterval(schedulerTick, 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`gym-skill-server listening on ${PORT} (SEND_ENABLED=${SEND_ENABLED}, SCAN_HOUR_KST=${SCAN_HOUR_KST})`));
