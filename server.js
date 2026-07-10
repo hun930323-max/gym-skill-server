@@ -200,6 +200,86 @@ function extendMembership(phone, plan) {
   return newExpire;
 }
 
+// ── ② PT 예약 고도화 엔진 ──────────────────────────────
+// 강사별 실시간 가능시간 조회 · 예약 확정/취소 · 내 예약 조회 · 수업 전날 리마인드.
+const TRAINERS = {
+  "김코치": { name: "김코치", specialty: "웨이트·체형교정", hours: [10, 11, 14, 15, 16, 17, 18, 19] },
+  "이코치": { name: "이코치", specialty: "다이어트·재활", hours: [9, 10, 11, 13, 14, 15, 16] },
+  "박코치": { name: "박코치", specialty: "필라테스·바디프로필", hours: [11, 12, 13, 17, 18, 19, 20] },
+};
+const TRAINER_NAMES = Object.keys(TRAINERS);
+// 예약 저장소(데모: 인메모리). 실제는 DB로 교체.
+const RESERVATIONS = [];
+let _resSeq = 1;
+function newResId() { return "R" + (_resSeq++); }
+const hhmm = (h) => `${String(h).padStart(2, "0")}:00`;
+const nowHourKst = () => new Date(Date.now() + 9 * 3600000).getUTCHours();
+
+function bookedHours(trainer, date) {
+  return new Set(RESERVATIONS.filter((r) => r.status === "confirmed" && r.trainer === trainer && r.date === date).map((r) => r.time));
+}
+// 강사·날짜의 실시간 가능 시간(이미 예약된 슬롯·지난 시간 제외)
+function availableHours(trainer, date) {
+  const tr = TRAINERS[trainer];
+  if (!tr) return [];
+  const booked = bookedHours(trainer, date);
+  const isToday = date === kstDate(0);
+  const nh = nowHourKst();
+  return tr.hours.filter((h) => !booked.has(hhmm(h)) && !(isToday && h <= nh));
+}
+function myReservations(phone) {
+  const today = kstDate(0);
+  return RESERVATIONS
+    .filter((r) => r.phone === phone && r.status === "confirmed" && r.date >= today)
+    .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+}
+function createReservation(m, trainer, date, time) {
+  const r = { id: newResId(), phone: m.phone, name: m.name, trainer, date, time, status: "confirmed", remindedDayBefore: false };
+  RESERVATIONS.push(r);
+  return r;
+}
+
+// 발화에서 강사/날짜/시간 파싱(전화번호는 미리 제거)
+function parseTrainer(s) { return TRAINER_NAMES.find((t) => (s || "").includes(t)) || null; }
+function parseDate(s) {
+  s = s || "";
+  if (/오늘/.test(s)) return kstDate(0);
+  if (/내일/.test(s)) return kstDatePlus(1);
+  if (/모레/.test(s)) return kstDatePlus(2);
+  const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return iso[0];
+  const md = s.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  if (md) return `${kstDate(0).slice(0, 4)}-${String(md[1]).padStart(2, "0")}-${String(md[2]).padStart(2, "0")}`;
+  return null;
+}
+function parseHour(s) {
+  s = s || "";
+  let m = s.match(/(오전|오후)?\s*(\d{1,2})\s*시/);
+  if (m) { let h = parseInt(m[2], 10); if (m[1] === "오후" && h < 12) h += 12; if (m[1] === "오전" && h === 12) h = 0; return h; }
+  m = s.match(/\b([01]?\d|2[0-3]):00\b/);
+  if (m) return parseInt(m[1], 10);
+  return null;
+}
+
+// 수업 전날 리마인드 스캔(스케줄러가 매일 실행)
+function scanReservationReminders() {
+  const tomorrow = kstDatePlus(1);
+  const out = [];
+  for (const r of RESERVATIONS) {
+    if (r.status !== "confirmed" || r.remindedDayBefore) continue;
+    if (r.date !== tomorrow) continue;
+    r.remindedDayBefore = true;
+    const message = `[${GYM}] ${r.name}님, 내일(${r.date}) ${r.time} ${r.trainer} PT 수업 예약이 있어요 💪\n시간에 맞춰 방문해 주세요! (변경/취소는 챗봇에서 '예약 취소')`;
+    const rr = sendMessage(r.phone, { channel: "알림톡(정보성)", message, kind: "pt-remind" });
+    out.push({ id: r.id, phone: r.phone, name: r.name, trainer: r.trainer, date: r.date, time: r.time, message, sent: rr.ok, dryRun: !!rr.dryRun });
+  }
+  return out;
+}
+
+// 데모 시드: 내일 홍길동-김코치 19시(전날 리마인드 데모용) + 최지우-이코치 모레
+RESERVATIONS.push({ id: newResId(), phone: "01012345678", name: "홍길동", trainer: "김코치", date: kstDatePlus(1), time: "19:00", status: "confirmed", remindedDayBefore: false });
+RESERVATIONS.push({ id: newResId(), phone: "01066665555", name: "최지우", trainer: "이코치", date: kstDatePlus(2), time: "14:00", status: "confirmed", remindedDayBefore: false });
+
 // ── 스킬 응답 빌더 ──
 const skill = (outputs, quickReplies) => {
   const template = { outputs };
@@ -279,13 +359,22 @@ app.get("/admin/renewal-scan", (_req, res) => {
   });
 });
 
-// ── ① 관리자: 두 스캔을 한 번에(하루 1회 실행용) ──
+// ── ② 관리자: PT 수업 전날 리마인드 스캔(스케줄러/외부 cron이 매일 호출) ──
+app.get("/admin/reservation-scan", (_req, res) => {
+  const reminders = scanReservationReminders();
+  res.json({ scannedAt: new Date().toISOString(), sendEnabled: SEND_ENABLED, count: reminders.length, reminders,
+    note: SEND_ENABLED ? "SEND_ENABLED=true — 실제 발송." : "dry-run 로그만. 채널 연결·템플릿 승인 후 SEND_ENABLED=true." });
+});
+
+// ── 관리자: 스캔을 한 번에(하루 1회 실행용) — 리워드/재등록/PT리마인드 ──
 app.get("/admin/daily-scan", (_req, res) => {
   const rewards = scanRewards();
   const renewals = scanRenewals();
+  const ptReminders = scanReservationReminders();
   res.json({ scannedAt: new Date().toISOString(), sendEnabled: SEND_ENABLED,
     rewards: { count: rewards.length, items: rewards },
-    renewals: { count: renewals.length, items: renewals } });
+    renewals: { count: renewals.length, items: renewals },
+    ptReminders: { count: ptReminders.length, items: ptReminders } });
 });
 
 // ── ① 원클릭 연장 페이지 ──
@@ -440,18 +529,85 @@ app.post("/skill/attendance", (req, res) => {
   } }], MENU));
 });
 
+// ── ② PT 예약/취소/조회 통합 스킬 ──
+const dateLabel = (d) => (d === kstDate(0) ? "오늘" : d === kstDatePlus(1) ? "내일" : d === kstDatePlus(2) ? "모레" : d);
+const RESERVE_MENU = [qr("PT 예약", "PT 예약할래"), qr("내 예약 조회", "내 예약 조회"), qr("가격 안내", "가격 알려줘")];
+
 app.post("/skill/reserve", (req, res) => {
-  const p = req.body?.action?.params || {};
-  const trainer = p.trainer || p.코치 || "상관없음";
-  const date = p.date || p.sys_date || p.날짜;
-  const time = p.time || p.sys_time || p.시간;
-  if (!date || !time) return res.json(skill([text(`${trainer} 트레이너로 예약을 도와드릴게요.\n원하시는 날짜와 시간을 선택해 주세요.`)],
-    [qr("김코치", "김코치 예약"), qr("이코치", "이코치 예약"), qr("상관없음", "상관없음 예약")]));
+  const body = req.body;
+  const p = body?.action?.params || {};
+  const utterRaw = body?.userRequest?.utterance || "";
+  const utter = utterRaw.replace(/01\d{8,9}/g, " "); // 전화번호 제거 후 파싱
+  const m = findMember(body);
+
+  // (A) 예약 취소
+  if (/취소/.test(utter)) {
+    const idm = utterRaw.match(/R\d+/i);
+    let target = null;
+    if (idm) target = RESERVATIONS.find((r) => r.id.toUpperCase() === idm[0].toUpperCase() && r.status === "confirmed");
+    else if (m) { const list = myReservations(m.phone); if (list.length === 1) target = list[0]; }
+    if (!target) {
+      if (m) {
+        const list = myReservations(m.phone);
+        if (!list.length) return res.json(skill([text("취소할 예약이 없어요.")], RESERVE_MENU));
+        return res.json(skill([text("취소할 예약을 선택해 주세요 👇")],
+          list.map((r) => qr(`${dateLabel(r.date)} ${r.time} ${r.trainer}`, `예약취소 ${r.id} ${m.phone}`))));
+      }
+      return res.json(skill([text("취소하실 예약자 전화번호를 함께 입력해 주세요.\n예) 예약취소 01012345678")], RESERVE_MENU));
+    }
+    target.status = "canceled";
+    return res.json(skill([{ basicCard: {
+      title: "🗑️ 예약이 취소됐어요",
+      description: `${target.name}님 · ${dateLabel(target.date)}(${target.date}) ${target.time} ${target.trainer}\n다시 예약하시려면 'PT 예약'을 눌러주세요.`,
+      buttons: [btnMsg("PT 예약"), btnMsg("내 예약 조회")],
+    } }], RESERVE_MENU));
+  }
+
+  // (B) 내 예약 조회
+  if (/(내\s*예약|예약\s*조회|예약\s*내역|예약\s*확인)/.test(utter)) {
+    if (!m) return res.json(skill([text("예약자 확인을 위해 전화번호를 함께 입력해 주세요.\n예) 내 예약 조회 01012345678")], RESERVE_MENU));
+    const list = myReservations(m.phone);
+    if (!list.length) return res.json(skill([text(`${m.name}님, 예정된 PT 예약이 없어요.\n'PT 예약'으로 새 수업을 잡아보세요!`)], RESERVE_MENU));
+    return res.json(skill([{ itemCard: {
+      head: { title: `📅 ${m.name}님 예약 내역` },
+      itemList: list.map((r) => ({ title: `${dateLabel(r.date)} ${r.time}`, description: `${r.trainer} (${r.id})` })),
+      buttons: list.slice(0, 3).map((r) => btnMsg(`예약취소 ${r.id} ${m.phone}`)),
+    } }], RESERVE_MENU));
+  }
+
+  // (C) 신규 예약 — 강사 → 날짜 → 시간 → 확정
+  const trainer = parseTrainer(utter) || (TRAINERS[p.trainer] ? p.trainer : null);
+  if (!trainer) {
+    return res.json(skill([text("어떤 트레이너로 예약할까요? 전문 분야를 참고해 선택해 주세요 💪\n" +
+      TRAINER_NAMES.map((t) => `· ${t} — ${TRAINERS[t].specialty}`).join("\n"))],
+      TRAINER_NAMES.map((t) => qr(t, `${t} 예약`))));
+  }
+  const date = parseDate(utter) || p.date || p.sys_date;
+  if (!date) {
+    return res.json(skill([text(`${trainer} 트레이너로 예약할게요.\n원하시는 날짜를 선택해 주세요 📅`)],
+      [qr("오늘", `${trainer} 오늘 예약`), qr("내일", `${trainer} 내일 예약`), qr("모레", `${trainer} 모레 예약`)]));
+  }
+  const avail = availableHours(trainer, date);
+  const hour = parseHour(utter);
+  const time = hour != null ? hhmm(hour) : (p.time || p.sys_time);
+  if (!time) {
+    if (!avail.length) return res.json(skill([text(`${trainer} 트레이너는 ${dateLabel(date)}(${date}) 예약 가능한 시간이 없어요 😢\n다른 날짜를 선택해 주세요.`)],
+      [qr("오늘", `${trainer} 오늘 예약`), qr("내일", `${trainer} 내일 예약`), qr("모레", `${trainer} 모레 예약`)]));
+    return res.json(skill([text(`${trainer} 트레이너 ${dateLabel(date)}(${date}) 가능 시간이에요.\n원하시는 시간을 선택해 주세요 ⏰`)],
+      avail.map((h) => qr(hhmm(h), `${trainer} ${date} ${hhmm(h)} 예약`))));
+  }
+  // 시간까지 지정됨 → 예약 확정
+  if (!m) return res.json(skill([text(`예약을 확정하려면 예약자 전화번호를 함께 입력해 주세요.\n예) ${trainer} ${dateLabel(date)} ${time} 예약 01012345678`)], RESERVE_MENU));
+  if (!avail.includes(parseInt(time, 10))) {
+    return res.json(skill([text(`앗, ${trainer} 트레이너 ${dateLabel(date)} ${time}은(는) 방금 마감됐어요 😢\n다른 시간을 선택해 주세요.`)],
+      availableHours(trainer, date).map((h) => qr(hhmm(h), `${trainer} ${date} ${hhmm(h)} 예약`))));
+  }
+  const r = createReservation(m, trainer, date, time);
   res.json(skill([{ basicCard: {
-    title: "✅ 예약 완료",
-    description: `${date} ${time}\n${trainer} PT 예약이 완료됐어요!\n하루 전에 리마인드 보내드릴게요.`,
-    buttons: [btnMsg("예약 취소"), btnMsg("일정 변경")],
-  } }], MENU));
+    title: "✅ PT 예약 완료",
+    description: `${m.name}님 · ${dateLabel(date)}(${date}) ${time}\n${trainer} (${TRAINERS[trainer].specialty})\n예약번호 ${r.id}\n수업 전날 리마인드를 보내드릴게요!`,
+    buttons: [btnMsg(`예약취소 ${r.id} ${m.phone}`), btnMsg("내 예약 조회")],
+  } }], RESERVE_MENU));
 });
 
 app.post("/skill/faq", (req, res) => {
@@ -520,7 +676,8 @@ function schedulerTick() {
     _lastScanDate = dateStr;
     const rewards = scanRewards();
     const renewals = scanRenewals();
-    console.log(`[스케줄러 ${dateStr} ${String(hh).padStart(2, "0")}시 KST] 리워드 ${rewards.length}건 / 재등록 리마인드 ${renewals.length}건 (SEND_ENABLED=${SEND_ENABLED})`);
+    const ptReminders = scanReservationReminders();
+    console.log(`[스케줄러 ${dateStr} ${String(hh).padStart(2, "0")}시 KST] 리워드 ${rewards.length}건 / 재등록 ${renewals.length}건 / PT전날리마인드 ${ptReminders.length}건 (SEND_ENABLED=${SEND_ENABLED})`);
   }
 }
 setInterval(schedulerTick, 60 * 1000); // 1분마다 시각 체크
