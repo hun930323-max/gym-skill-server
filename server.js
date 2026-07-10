@@ -426,6 +426,87 @@ const LOSTFOUND = [
 const PARKING = {}; // phone -> car number
 function parseCar(s) { const m = (s || "").replace(/\s/g, "").match(/\d{2,3}[가-힣]\d{4}/); return m ? m[0] : null; }
 
+// ────────────────────────────────────────────────────────────
+// 기존 기능 디테일 강화용 데이터·헬퍼
+// ────────────────────────────────────────────────────────────
+// 회원 마이페이지: 결제내역·락커만료·노쇼·등급
+MEMBERS["01012345678"].payments = [{ date: kstDate(95), item: "헬스 3개월", amount: 259000 }, { date: kstDate(5), item: "PT 10회", amount: 550000 }];
+MEMBERS["01012345678"].lockerExpire = kstDatePlus(20);
+MEMBERS["01012345678"].noShow = 0;
+MEMBERS["01099998888"].payments = [{ date: kstDate(150), item: "헬스+필라 6개월", amount: 690000 }];
+MEMBERS["01099998888"].noShow = 1;
+MEMBERS["01077776666"].payments = [{ date: kstDate(2), item: "헬스 1개월", amount: 99000 }];
+MEMBERS["01066665555"].payments = [{ date: kstDate(60), item: "헬스 3개월", amount: 259000 }, { date: kstDate(60), item: "PT 20회", amount: 990000 }];
+MEMBERS["01066665555"].lockerExpire = kstDatePlus(40);
+
+function memberGrade(m) {
+  const spent = (m.payments || []).reduce((s, p) => s + p.amount, 0);
+  if (spent >= 900000) return { name: "골드", icon: "🥇", spent };
+  if (spent >= 300000) return { name: "실버", icon: "🥈", spent };
+  return { name: "브론즈", icon: "🥉", spent };
+}
+
+// 개인 최고 연속 출석
+function bestStreak(set) {
+  if (!set || !set.size) return 0;
+  const idx = [...set].map(dayIdx).sort((a, b) => a - b);
+  let best = 1, cur = 1;
+  for (let i = 1; i < idx.length; i++) {
+    if (idx[i] === idx[i - 1] + 1) { cur++; best = Math.max(best, cur); }
+    else if (idx[i] !== idx[i - 1]) { cur = 1; }
+  }
+  return best;
+}
+
+// 이번 달 출석 잔디밭(텍스트 히트맵)
+function attendanceCalendar(set) {
+  const now = new Date(Date.now() + 9 * 3600000);
+  const y = now.getUTCFullYear(), mo = now.getUTCMonth(), today = now.getUTCDate();
+  const firstDow = new Date(Date.UTC(y, mo, 1)).getUTCDay();
+  const dim = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+  const ymd = (d) => `${y}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push("⬛");
+  for (let d = 1; d <= dim; d++) cells.push(d === today ? "🔥" : (set && set.has(ymd(d)) ? "🟩" : "⬜"));
+  while (cells.length % 7 !== 0) cells.push("⬛");
+  const rows = [];
+  for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7).join(""));
+  return `🗓️ ${y}년 ${mo + 1}월\n${rows.join("\n")}`;
+}
+function progressBar(cur, goal) {
+  const n = 10, filled = Math.max(0, Math.min(n, Math.round((cur / goal) * n)));
+  return "▓".repeat(filled) + "░".repeat(n - filled) + ` ${cur}/${goal}회`;
+}
+
+// 실시간 혼잡도(시간대 기반 추정)
+function zoneCongestion(peak) {
+  const h = nowHourKst();
+  if (peak && peak.includes(h)) return { icon: "🔴", label: "붐빔" };
+  if (peak && (peak.includes(h - 1) || peak.includes(h + 1))) return { icon: "🟡", label: "보통" };
+  return { icon: "🟢", label: "여유" };
+}
+
+// 지난 수업(운동 기록)
+function pastReservations(phone) {
+  const today = kstDate(0);
+  return RESERVATIONS.filter((r) => r.phone === phone && (r.status === "done" || (r.status === "confirmed" && r.date < today)))
+    .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+}
+RESERVATIONS.push({ id: newResId(), phone: "01012345678", name: "홍길동", trainer: "김코치", date: kstDate(3), time: "19:00", status: "done", attended: true, feedback: "스쿼트 자세 교정 완료 · 다음 목표 데드리프트 60kg", remindedDayBefore: true });
+RESERVATIONS.push({ id: newResId(), phone: "01012345678", name: "홍길동", trainer: "김코치", date: kstDate(6), time: "19:00", status: "done", attended: true, feedback: "인터벌 유산소 20분 · 코어 루틴 추가", remindedDayBefore: true });
+
+// 강사 리뷰·평점·대표 프로그램
+Object.assign(TRAINERS["김코치"], { rating: 4.9, reviews: 127, program: "3개월 벌크업 프로그램" });
+Object.assign(TRAINERS["이코치"], { rating: 4.8, reviews: 94, program: "8주 체지방 감량반" });
+Object.assign(TRAINERS["박코치"], { rating: 5.0, reviews: 63, program: "바디프로필 12주 완성" });
+
+// 이벤트(마감 카운트다운·선착순)
+const EVENTS = [
+  { title: "🎉 신규 3개월 등록 PT 2회 무료", desc: "등록비 면제 + PT 2회 증정", end: kstDatePlus(12), total: 30, left: 8 },
+  { title: "👥 친구 추천 이벤트", desc: "추천·피추천 양쪽 회원권 2주 연장", end: kstDatePlus(20), total: 0, left: 0 },
+  { title: "📊 인바디 무료 체험 (7월 한정)", desc: "체성분 측정 + 결과 상담 무료", end: kstDatePlus(6), total: 50, left: 12 },
+];
+
 // ── 스킬 응답 빌더 ──
 const skill = (outputs, quickReplies) => {
   const template = { outputs };
@@ -614,21 +695,33 @@ app.post("/skill/membership", (req, res) => {
   const m = findMember(req.body);
   if (!m) return res.json(skill([text("회원 정보를 찾지 못했어요. 등록하신 전화번호를 함께 입력해 주세요.\n예) 회원권 01012345678")], [qr("가격 안내", "가격 알려줘")]));
   const dday = ddayOf(m.membership.expire);
-  const pt = m.pt.remain > 0 ? `${m.pt.remain}회 남음 (${m.pt.trainer})` : "없음";
+  const set = ATT[m.phone] || new Set();
+  const g = memberGrade(m);
+  const next = myReservations(m.phone)[0];
+  const nextStr = next ? `${dateLabel(next.date)} ${next.time} ${next.trainer}` : "예약 없음";
+  const ptStr = m.pt.remain > 0 ? `${m.pt.remain}회 (다음 ${nextStr})` : `없음 (다음 ${nextStr})`;
+  const lockerStr = m.locker ? `이용 중${m.lockerExpire ? ` · 만료 ${m.lockerExpire}` : ""}` : "미이용";
+  const lastPay = (m.payments || []).slice(-1)[0];
   const near = dday <= 7;
-  const buttons = [btnMsg("출석 체크")];
+  const buttons = [btnMsg("출석 현황")];
   buttons.push(near ? btnLink("재등록/연장", renewLink(m.phone)) : btnMsg("재등록/연장"));
-  res.json(skill([{ itemCard: {
-    head: { title: `${m.name} 회원님 이용현황` },
-    itemList: [
-      { title: "회원권", description: m.membership.type },
-      { title: "만료일", description: m.membership.expire },
-      { title: "남은 기간", description: `${dday}일 남음 (D-${dday})` },
-      { title: "PT", description: pt },
-      { title: "락커", description: m.locker ? "이용 중" : "미이용" },
-    ],
-    buttons,
-  } }], MENU));
+  const stats = `📊 이번 달 ${monthCount(set)}회 방문 (연속 ${streakOf(set)}일) · 이번 주 ${weekCount(set)}회` +
+    (lastPay ? `\n💳 최근 결제: ${lastPay.item} ${won(lastPay.amount)} (${lastPay.date})` : "") +
+    `\n🏅 누적 결제 ${won(g.spent)} · ${g.icon} ${g.name} 등급`;
+  res.json(skill([
+    { itemCard: {
+      head: { title: `${g.icon} ${m.name}님 마이페이지` },
+      itemList: [
+        { title: "등급", description: `${g.icon} ${g.name}` },
+        { title: "회원권", description: `${m.membership.type} · D-${dday}` },
+        { title: "만료일", description: m.membership.expire },
+        { title: "PT", description: ptStr },
+        { title: "락커", description: lockerStr },
+      ],
+      buttons,
+    } },
+    text(stats),
+  ], MENU));
 });
 
 // ── ① 재등록/연장 스킬 ──
@@ -676,16 +769,11 @@ app.post("/skill/attendance", (req, res) => {
   const m = findMember(req.body);
   if (!m) return res.json(skill([text("회원 정보를 찾지 못했어요. 등록하신 전화번호를 함께 입력해 주세요.\n예) 출석 현황 01012345678")]));
   const set = ATT[m.phone] || new Set();
-  const s = streakOf(set);
-  res.json(skill([{ itemCard: {
-    head: { title: `${badge(s)} ${m.name}님 출석 현황` },
-    itemList: [
-      { title: "연속 출석", description: `${s}일` },
-      { title: "이번 주", description: `${weekCount(set)}회 / 목표 3회` },
-      { title: "이번 달", description: `${monthCount(set)}회` },
-    ],
-    buttons: [btnMsg("출석 체크")],
-  } }], MENU));
+  const s = streakOf(set), best = bestStreak(set), mc = monthCount(set), wc = weekCount(set);
+  const goal = 12;
+  const body = `${badge(s)} ${m.name}님 출석 현황\n\n${attendanceCalendar(set)}\n🟩 출석 · 🔥 오늘 · ⬜ 미방문\n\n` +
+    `🔥 연속 ${s}일 (최고 ${best}일)\n📅 이번 주 ${wc}회 · 이번 달 ${mc}회\n🎯 이달 목표 ${progressBar(mc, goal)}`;
+  res.json(skill([text(body)], [qr("출석 체크", "출석"), qr("회원권 조회", "내 회원권 조회"), qr("수업 시간표", "수업 시간표")]));
 });
 
 // ── ② PT 예약/취소/조회 통합 스킬 ──
@@ -698,6 +786,30 @@ app.post("/skill/reserve", (req, res) => {
   const utterRaw = body?.userRequest?.utterance || "";
   const utter = utterRaw.replace(/01\d{8,9}/g, " ");
   const m = findMember(body);
+
+  // 지난 수업 기록/피드백
+  if (/(수업\s*기록|운동\s*기록|지난\s*수업|운동\s*일지)/.test(utter)) {
+    if (!m) return res.json(skill([text("기록 조회를 위해 전화번호를 함께 입력해 주세요.\n예) 운동 기록 01012345678")], RESERVE_MENU));
+    const past = pastReservations(m.phone);
+    if (!past.length) return res.json(skill([text(`${m.name}님, 아직 완료된 수업 기록이 없어요.`)], RESERVE_MENU));
+    return res.json(skill([{ itemCard: {
+      head: { title: `📒 ${m.name}님 운동 기록` },
+      itemList: past.slice(0, 5).map((r) => ({ title: `${r.date} ${r.trainer}`, description: r.feedback || "기록 없음" })),
+      buttons: [btnMsg("PT 예약")],
+    } }], RESERVE_MENU));
+  }
+  // 강사 실시간 빈 시간
+  if (/(빈\s*시간|가능\s*시간|빈시간)/.test(utter)) {
+    const tr = parseTrainer(utter);
+    if (!tr) return res.json(skill([text("어떤 트레이너의 빈 시간을 볼까요?")], TRAINER_NAMES.map((t) => qr(t, `${t} 빈시간`))));
+    const t0 = kstDate(0), t1 = kstDatePlus(1);
+    const fmt = (arr) => (arr.length ? arr.map((h) => hhmm(h)).join(", ") : "마감");
+    return res.json(skill([{ basicCard: {
+      title: `⏱️ ${tr} 실시간 예약 가능 시간`,
+      description: `· 오늘(${t0}): ${fmt(availableHours(tr, t0))}\n· 내일(${t1}): ${fmt(availableHours(tr, t1))}\n\n원하시는 시간으로 바로 예약하세요.`,
+      buttons: [btnMsg(`${tr} 오늘 예약`), btnMsg(`${tr} 내일 예약`)],
+    } }], RESERVE_MENU));
+  }
 
   if (/취소/.test(utter)) {
     const idm = utterRaw.match(/R\d+/i);
@@ -726,9 +838,9 @@ app.post("/skill/reserve", (req, res) => {
     const list = myReservations(m.phone);
     if (!list.length) return res.json(skill([text(`${m.name}님, 예정된 PT 예약이 없어요.\n'PT 예약'으로 새 수업을 잡아보세요!`)], RESERVE_MENU));
     return res.json(skill([{ itemCard: {
-      head: { title: `📅 ${m.name}님 예약 내역` },
+      head: { title: `📅 ${m.name}님 예약 내역${m.noShow ? ` · 노쇼 ${m.noShow}회` : ""}` },
       itemList: list.map((r) => ({ title: `${dateLabel(r.date)} ${r.time}`, description: `${r.trainer} (${r.id})` })),
-      buttons: list.slice(0, 3).map((r) => btnMsg(`예약취소 ${r.id} ${m.phone}`)),
+      buttons: [...list.slice(0, 2).map((r) => btnMsg(`예약취소 ${r.id} ${m.phone}`)), btnMsg("운동 기록")],
     } }], RESERVE_MENU));
   }
 
@@ -760,7 +872,7 @@ app.post("/skill/reserve", (req, res) => {
   const r = createReservation(m, trainer, date, time);
   res.json(skill([{ basicCard: {
     title: "✅ PT 예약 완료",
-    description: `${m.name}님 · ${dateLabel(date)}(${date}) ${time}\n${trainer} (${TRAINERS[trainer].specialty})\n예약번호 ${r.id}\n수업 전날 리마인드를 보내드릴게요!`,
+    description: `${m.name}님 · ${dateLabel(date)}(${date}) ${time}\n${trainer} (${TRAINERS[trainer].specialty})\n예약번호 ${r.id}\n\n📋 준비물: 운동복·실내화·수건·물\n⏰ 10분 전 도착 · 식사는 2시간 전 권장\n수업 전날 리마인드를 보내드릴게요!`,
     buttons: [btnMsg(`예약취소 ${r.id} ${m.phone}`), btnMsg("내 예약 조회")],
   } }], RESERVE_MENU));
 });
@@ -935,17 +1047,17 @@ app.post("/skill/faq", (req, res) => {
 const facilityImg = (label) => `https://placehold.co/800x400/1B2430/FFB020.png?text=${encodeURIComponent(label)}`;
 const FACILITIES = [
   {
-    title: "💪 헬스존", img: "GYM ZONE",
+    title: "💪 헬스존", img: "GYM ZONE", peak: [18, 19, 20],
     description: "· 유산소 머신 20대 (트레드밀·싸이클·천정)\n· 웨이트 머신 30종 (라이프피트니스·해머스트렝스)\n· 프리웨이트 덤벨 2~50kg · 파워랙 4대",
     buttons: [btnMsg("가격 안내"), btnMsg("PT 예약")],
   },
   {
-    title: "🧘 GX룸", img: "GX ROOM",
+    title: "🧘 GX룸", img: "GX ROOM", peak: [19, 20],
     description: "· 스피닝 바이크 20대 · 층고 3.5m\n· 요가·필라테스·줌바 그룹수업\n· 전문 사운드·무대 조명 시스템",
     buttons: [btnMsg("수업 시간표")],
   },
   {
-    title: "🚿 샤워·사우나", img: "SHOWER & SAUNA",
+    title: "🚿 샤워·사우나", img: "SHOWER & SAUNA", peak: [20, 21],
     description: "· 개인 샤워부스 8칸 · 건식 사우나\n· 수건·드라이어·어메니티 무료\n· 운동복 대여 (1회 2,000원)",
     buttons: [btnMsg("대여 안내")],
   },
@@ -966,20 +1078,23 @@ const FACILITIES = [
   },
 ];
 app.post("/skill/facility", (_req, res) => {
-  res.json(skill([{ carousel: { type: "basicCard", items: FACILITIES.map((f) => ({
-    title: f.title,
-    description: f.description,
-    thumbnail: { imageUrl: facilityImg(f.img) },
-    buttons: f.buttons,
-  })) } }], [qr("체험 상담", "무료 상담 신청"), qr("수업 시간표", "수업 시간표"), qr("위치 안내", "위치 알려줘"), qr("가격 안내", "가격 알려줘")]));
+  res.json(skill([{ carousel: { type: "basicCard", items: FACILITIES.map((f) => {
+    let desc = f.description;
+    if (f.peak) { const c = zoneCongestion(f.peak); desc = `지금 ${c.icon} ${c.label}\n${desc}`; }
+    return { title: f.title, description: desc, thumbnail: { imageUrl: facilityImg(f.img) }, buttons: f.buttons };
+  }) } }], [qr("체험 상담", "무료 상담 신청"), qr("수업 시간표", "수업 시간표"), qr("위치 안내", "위치 알려줘"), qr("가격 안내", "가격 알려줘")]));
 });
 
 app.post("/skill/event", (_req, res) => {
-  res.json(skill([{ basicCard: {
-    title: "🎉 이달의 이벤트",
-    description: "· 신규 3개월 등록 시 PT 2회 무료 + 등록비 면제\n· 친구 추천 시 양쪽 회원권 2주 연장\n· 인바디 무료 체험 (7월 한정)",
-    buttons: [btnMsg("체험 상담"), btnMsg("가격 안내")],
-  } }], MENU));
+  const items = EVENTS.map((e) => {
+    const dday = ddayOf(e.end);
+    const lines = [`⏰ D-${dday} 마감 (~${e.end})`];
+    if (e.total > 0) lines.push(`🎟️ 선착순 ${e.left}/${e.total}명 남음`);
+    lines.push(e.desc);
+    return { title: e.title, description: lines.join("\n"), buttons: [btnMsg("무료 상담 신청"), btnMsg("가격 안내")] };
+  });
+  res.json(skill([{ carousel: { type: "basicCard", items } }],
+    [qr("무료 상담", "무료 상담 신청"), qr("가격 안내", "가격 알려줘")]));
 });
 
 const hoursRange = (hrs) => `${Math.min(...hrs)}시~${Math.max(...hrs)}시`;
@@ -987,9 +1102,9 @@ app.post("/skill/trainer", (_req, res) => {
   const img = (t) => `https://placehold.co/800x400/1B2430/FFB020.png?text=${encodeURIComponent(t)}`;
   const items = Object.values(TRAINERS).map((t) => ({
     title: `${t.name} · ${t.specialty}`,
-    description: `📌 전문: ${t.specialty}\n🏅 ${t.career} · ${t.clients}\n📜 ${t.certs}\n🕒 담당 ${hoursRange(t.hours)} (평일)\n${t.tags}\n💬 "${t.intro}"`,
+    description: `⭐ ${t.rating} (후기 ${t.reviews}) · ${t.career}\n📌 ${t.specialty} · ${t.clients}\n📜 ${t.certs}\n🎯 대표: ${t.program}\n🕒 담당 ${hoursRange(t.hours)} (평일)\n💬 "${t.intro}"`,
     thumbnail: { imageUrl: img(t.photo) },
-    buttons: [btnMsg(`${t.name} 예약`), btnMsg("가격 안내")],
+    buttons: [btnMsg(`${t.name} 예약`), btnMsg(`${t.name} 빈시간`)],
   }));
   res.json(skill([{ carousel: { type: "basicCard", items } }],
     [qr("PT 예약", "PT 예약할래"), qr("무료 상담", "무료 상담 신청"), qr("가격 안내", "가격 알려줘")]));
