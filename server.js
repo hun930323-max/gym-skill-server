@@ -247,6 +247,45 @@ app.post("/skill/faq", (req, res) => {
   res.json(skill([text(answer)], MENU));
 });
 
+// ── 매장 소개(브랜딩) 기능 ──
+app.post("/skill/facility", (_req, res) => {
+  res.json(skill([{ listCard: {
+    header: { title: `🏋️ ${GYM} 시설 안내` },
+    items: [
+      { title: "헬스존", description: "최신 유산소·웨이트 머신 50대+" },
+      { title: "GX룸", description: "스피닝·요가·필라테스 그룹수업" },
+      { title: "샤워·사우나", description: "개인 샤워부스, 사우나, 수건 무료" },
+      { title: "인바디존", description: "체성분 측정 상시 무료" },
+      { title: "주차", description: "지하주차장 2시간 무료" },
+    ],
+    buttons: [btnMsg("체험 상담"), btnMsg("위치 안내")],
+  } }], MENU));
+});
+
+app.post("/skill/event", (_req, res) => {
+  res.json(skill([{ basicCard: {
+    title: "🎉 이달의 이벤트",
+    description: "· 신규 3개월 등록 시 PT 2회 무료 + 등록비 면제\n· 친구 추천 시 양쪽 회원권 2주 연장\n· 인바디 무료 체험 (7월 한정)",
+    buttons: [btnMsg("체험 상담"), btnMsg("가격 안내")],
+  } }], MENU));
+});
+
+app.post("/skill/trainer", (_req, res) => {
+  res.json(skill([{ carousel: { type: "basicCard", items: [
+    { title: "김코치", description: "웨이트·체형교정 전문 · 경력 10년\n\"자세부터 잡아드립니다\"", buttons: [btnMsg("김코치 예약")] },
+    { title: "이코치", description: "다이어트·재활 전문 · 경력 7년\n\"무리 없이 꾸준하게\"", buttons: [btnMsg("이코치 예약")] },
+    { title: "박코치", description: "필라테스·바디프로필 전문 · 경력 5년\n\"라인을 만드는 운동\"", buttons: [btnMsg("박코치 예약")] },
+  ] } }], MENU));
+});
+
+app.post("/skill/pt", (_req, res) => {
+  res.json(skill([{ basicCard: {
+    title: "💪 PT 안내",
+    description: "1:1 맞춤 프로그램으로 목표(다이어트·근력·재활)에 맞춰 트레이너를 매칭해 드려요.\n· 10/20/30회 단위 등록\n· 첫 상담·체험 무료",
+    buttons: [btnMsg("PT 예약"), btnMsg("강사 소개")],
+  } }], [qr("강사 소개", "강사 소개"), qr("PT 예약", "PT 예약할래"), qr("가격 안내", "가격 알려줘")]));
+});
+
 app.post("/skill/fallback", (_req, res) => {
   res.json(skill([text("담당자가 정확히 안내드릴게요.\n상담 가능 시간(평일 10~20시)에 순차적으로 답변드립니다.\n성함과 연락처를 남겨주시겠어요?")],
     [qr("상담 신청", "상담 신청합니다"), qr("처음으로", "메뉴")]));
