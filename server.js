@@ -22,6 +22,41 @@ const FAQ = {
   "PT": "PT는 10회/20회/30회 단위로 등록 가능하며, 첫 상담은 무료입니다. 예약은 챗봇에서 바로 하실 수 있어요.",
 };
 
+// ── 날짜 유틸(한국시간 기준) ──
+function kstDate(daysAgo = 0) {
+  const d = new Date(Date.now() + 9 * 3600000 - daysAgo * 86400000);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+const dayIdx = (s) => Math.floor(Date.parse(s + "T00:00:00+09:00") / 86400000);
+function ddayOf(expire) {
+  return Math.max(0, Math.ceil((new Date(expire + "T23:59:59+09:00") - new Date()) / 86400000));
+}
+
+// ── 출석 로그 (실서비스: 출입통제/CRM 로그를 동기화해서 적재) ──
+// 데모: 서버 시작 시 최근 며칠을 시드해서 연속 출석이 보이게 함
+const ATT = {};
+ATT["01012345678"] = new Set([kstDate(1), kstDate(2), kstDate(3)]); // 홍길동: 어제까지 3일 연속
+ATT["01099998888"] = new Set([kstDate(3), kstDate(8), kstDate(12)]); // 김영희: 최근 방문 뜸함
+function streakOf(set) {
+  if (!set || !set.size) return 0;
+  const idx = [...set].map(dayIdx).sort((a, b) => b - a);
+  const today = dayIdx(kstDate(0));
+  if (idx[0] !== today && idx[0] !== today - 1) return 0; // 오늘/어제 방문 없으면 연속 끊김
+  let s = 1, prev = idx[0];
+  for (let i = 1; i < idx.length; i++) {
+    if (idx[i] === prev - 1) { s++; prev = idx[i]; }
+    else if (idx[i] < prev - 1) break;
+  }
+  return s;
+}
+const monthCount = (set) => set ? [...set].filter((d) => d.slice(0, 7) === kstDate(0).slice(0, 7)).length : 0;
+const weekCount = (set) => {
+  if (!set) return 0;
+  const today = dayIdx(kstDate(0));
+  return [...set].map(dayIdx).filter((i) => i > today - 7).length;
+};
+const badge = (s) => (s >= 7 ? "🏆" : s >= 3 ? "🔥" : "👍");
+
 // ── 스킬 응답 빌더 ──
 const skill = (outputs, quickReplies) => {
   const template = { outputs };
@@ -31,22 +66,15 @@ const skill = (outputs, quickReplies) => {
 const text = (t) => ({ simpleText: { text: t } });
 const qr = (label, messageText) => ({ label, action: "message", messageText: messageText || label });
 const btnMsg = (label) => ({ action: "message", label, messageText: label });
-const MENU = [qr("회원권 조회", "내 회원권 조회"), qr("PT 예약", "PT 예약할래"), qr("가격 안내", "가격 알려줘"), qr("상담원 연결", "상담원 연결")];
+const MENU = [qr("회원권 조회", "내 회원권 조회"), qr("출석 체크", "출석"), qr("가격 안내", "가격 알려줘"), qr("상담원 연결", "상담원 연결")];
 
 const normPhone = (s) => String(s || "").replace(/\D/g, "");
-// 오늘(한국시간) 기준 만료일까지 남은 일수 계산
-function ddayOf(expire) {
-  const end = new Date(expire + "T23:59:59+09:00");
-  const now = new Date();
-  return Math.max(0, Math.ceil((end - now) / 86400000));
-}
 function findMember(body) {
   const props = body?.userRequest?.user?.properties || {};
   const id = props.appUserId;
   if (id && APPUSER_TO_PHONE[id]) { const p = APPUSER_TO_PHONE[id]; return { phone: p, ...MEMBERS[p] }; }
   const params = body?.action?.params || {};
   let phone = normPhone(params.phone || params.sys_phone_number || params.전화번호);
-  // 파라미터에 없으면 발화 텍스트에서 전화번호(01x-xxxx-xxxx) 추출
   if (!phone || !MEMBERS[phone]) {
     const m = normPhone(body?.userRequest?.utterance).match(/01\d{8,9}/);
     if (m) phone = m[0];
@@ -84,7 +112,44 @@ app.post("/skill/membership", (req, res) => {
       { title: "PT", description: pt },
       { title: "락커", description: m.locker ? "이용 중" : "미이용" },
     ],
-    buttons: [btnMsg("PT 예약"), btnMsg("재등록/연장")],
+    buttons: [btnMsg("출석 체크"), btnMsg("재등록/연장")],
+  } }], MENU));
+});
+
+// 출석 체크(QR 스캔 시 이 블록 호출) — 오늘 출석 기록 + 연속 출석 리워드
+app.post("/skill/checkin", (req, res) => {
+  const m = findMember(req.body);
+  if (!m) return res.json(skill([text("회원 정보를 찾지 못했어요. 등록하신 전화번호를 함께 입력해 주세요.\n예) 출석 01012345678")]));
+  ATT[m.phone] = ATT[m.phone] || new Set();
+  const today = kstDate(0);
+  const already = ATT[m.phone].has(today);
+  ATT[m.phone].add(today);
+  const s = streakOf(ATT[m.phone]);
+  const wk = weekCount(ATT[m.phone]);
+  const toGoal = Math.max(0, 3 - wk);
+  const head = already ? `${badge(s)} 오늘은 이미 출석했어요!` : `${badge(s)} 출석 완료! ${s}일 연속 🔥`;
+  const goalLine = toGoal === 0 ? "이번 주 목표(3회) 달성! 🎉" : `주 3회 목표까지 ${toGoal}회 남았어요`;
+  res.json(skill([{ basicCard: {
+    title: head,
+    description: `${m.name} 회원님\n· 연속 출석: ${s}일\n· 이번 달 방문: ${monthCount(ATT[m.phone])}회\n· ${goalLine}`,
+    buttons: [btnMsg("출석 현황"), btnMsg("회원권 조회")],
+  } }], MENU));
+});
+
+// 출석 현황 조회(기록은 하지 않음)
+app.post("/skill/attendance", (req, res) => {
+  const m = findMember(req.body);
+  if (!m) return res.json(skill([text("회원 정보를 찾지 못했어요. 등록하신 전화번호를 함께 입력해 주세요.\n예) 출석 현황 01012345678")]));
+  const set = ATT[m.phone] || new Set();
+  const s = streakOf(set);
+  res.json(skill([{ itemCard: {
+    head: { title: `${badge(s)} ${m.name}님 출석 현황` },
+    itemList: [
+      { title: "연속 출석", description: `${s}일` },
+      { title: "이번 주", description: `${weekCount(set)}회 / 목표 3회` },
+      { title: "이번 달", description: `${monthCount(set)}회` },
+    ],
+    buttons: [btnMsg("출석 체크")],
   } }], MENU));
 });
 
