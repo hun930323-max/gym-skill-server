@@ -924,19 +924,48 @@ app.post("/skill/faq", (req, res) => {
   res.json(skill([text(answer)], MENU));
 });
 
-// ── 매장 소개(브랜딩) 기능 ──
+// ── 매장 소개(브랜딩) 기능 — 존별 카드 캐러셀 ──
+// 이미지는 데모용 플레이스홀더(실제 매장 사진 URL로 교체하면 그대로 노출됨).
+const facilityImg = (label) => `https://placehold.co/800x400/1B2430/FFB020.png?text=${encodeURIComponent(label)}`;
+const FACILITIES = [
+  {
+    title: "💪 헬스존", img: "GYM ZONE",
+    description: "· 유산소 머신 20대 (트레드밀·싸이클·천정)\n· 웨이트 머신 30종 (라이프피트니스·해머스트렝스)\n· 프리웨이트 덤벨 2~50kg · 파워랙 4대",
+    buttons: [btnMsg("가격 안내"), btnMsg("PT 예약")],
+  },
+  {
+    title: "🧘 GX룸", img: "GX ROOM",
+    description: "· 스피닝 바이크 20대 · 층고 3.5m\n· 요가·필라테스·줌바 그룹수업\n· 전문 사운드·무대 조명 시스템",
+    buttons: [btnMsg("수업 시간표")],
+  },
+  {
+    title: "🚿 샤워·사우나", img: "SHOWER & SAUNA",
+    description: "· 개인 샤워부스 8칸 · 건식 사우나\n· 수건·드라이어·어메니티 무료\n· 운동복 대여 (1회 2,000원)",
+    buttons: [btnMsg("대여 안내")],
+  },
+  {
+    title: "📊 인바디존", img: "INBODY",
+    description: "· 체성분 분석기 InBody 970 상시 무료\n· 측정 후 트레이너 1:1 결과 상담\n· 목표별 맞춤 운동 처방",
+    buttons: [btnMsg("PT 예약")],
+  },
+  {
+    title: "🔐 라커·편의시설", img: "LOCKER & LOUNGE",
+    description: "· 개인 락커 300개 (월 20,000원)\n· 무인 정수기 · 단백질바 자판기\n· 라운지·무료 Wi-Fi",
+    buttons: [btnMsg("대여 안내")],
+  },
+  {
+    title: "🚗 주차장", img: "PARKING",
+    description: "· 지하주차장 40면 · 2시간 무료\n· 초과 시 10분당 500원\n· 챗봇에서 차량번호 바로 등록",
+    buttons: [btnMsg("주차 등록")],
+  },
+];
 app.post("/skill/facility", (_req, res) => {
-  res.json(skill([{ listCard: {
-    header: { title: `🏋️ ${GYM} 시설 안내` },
-    items: [
-      { title: "헬스존", description: "최신 유산소·웨이트 머신 50대+" },
-      { title: "GX룸", description: "스피닝·요가·필라테스 그룹수업" },
-      { title: "샤워·사우나", description: "개인 샤워부스, 사우나, 수건 무료" },
-      { title: "인바디존", description: "체성분 측정 상시 무료" },
-      { title: "주차", description: "지하주차장 2시간 무료" },
-    ],
-    buttons: [btnMsg("체험 상담"), btnMsg("위치 안내")],
-  } }], MENU));
+  res.json(skill([{ carousel: { type: "basicCard", items: FACILITIES.map((f) => ({
+    title: f.title,
+    description: f.description,
+    thumbnail: { imageUrl: facilityImg(f.img) },
+    buttons: f.buttons,
+  })) } }], [qr("체험 상담", "무료 상담 신청"), qr("수업 시간표", "수업 시간표"), qr("위치 안내", "위치 알려줘"), qr("가격 안내", "가격 알려줘")]));
 });
 
 app.post("/skill/event", (_req, res) => {
