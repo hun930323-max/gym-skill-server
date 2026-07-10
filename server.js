@@ -157,9 +157,17 @@ app.get("/admin/reward-scan", (_req, res) => {
 
 app.post("/skill/welcome", (req, res) => {
   const m = findMember(req.body);
-  if (m) return res.json(skill([text(`${m.name} 회원님, 안녕하세요! ${GYM}입니다 💪\n무엇을 도와드릴까요?`)], MENU));
-  res.json(skill([text(`안녕하세요! ${GYM}입니다 💪\n맞춤 안내를 위해 회원 정보를 먼저 연결해 주세요.`)],
-    [qr("내 정보 연결", "회원 연결"), qr("가격 안내", "가격 알려줘"), qr("상담원 연결", "상담원 연결")]));
+  const hello = m ? `${m.name} 회원님, 안녕하세요! ${GYM}입니다 💪` : `안녕하세요! ${GYM}입니다 💪`;
+  const menu = [
+    qr("회원권 조회", "내 회원권 조회"), qr("PT 예약", "PT 예약할래"), qr("출석 체크", "출석"),
+    qr("가격 안내", "가격 알려줘"), qr("시설 안내", "시설 안내"), qr("강사 소개", "강사 소개"),
+    qr("이달의 이벤트", "이벤트"), qr("상담원 연결", "상담원 연결"),
+  ];
+  res.json(skill([{ basicCard: {
+    title: hello,
+    description: "무엇을 도와드릴까요?\n아래 메뉴를 누르거나 궁금한 점을 입력해 주세요 👇",
+    buttons: [btnMsg("가격 안내"), btnMsg("시설 안내"), btnMsg("상담원 연결")],
+  } }], menu));
 });
 
 app.post("/skill/identify", (req, res) => {
